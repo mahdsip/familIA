@@ -1,0 +1,54 @@
+# =============================================================================
+# familIA — example variables
+#
+# Copy to terraform.tfvars and adjust. terraform.tfvars is GITIGNORED and must
+# NEVER be committed. Keep every value here generic — no names, no personal
+# data, no secrets.
+# =============================================================================
+
+aws_region   = "eu-central-1"
+project_name = "familia"
+environment  = "prod"
+
+# Two-phase deploy:
+#   Phase 1 (false): base infra only — empty docs bucket + S3 Vectors index.
+#                    Then sync your documents from your data machine.
+#   Phase 2 (true):  create the Knowledge Base + data source + auto-sync, and
+#                    ingest the documents already present in the bucket.
+enable_knowledge_base = false
+
+# Leave empty to auto-generate a non-personal, unique bucket name
+# (project_name + account id). Set a custom globally-unique name if you prefer.
+docs_bucket_name = ""
+
+# Restrict which S3 prefixes get indexed (optional). Empty = whole bucket.
+# docs_inclusion_prefixes = ["documents/"]
+
+# ----- Indexing quality (spend once, index well) --------------------------
+embedding_model_id   = "amazon.titan-embed-text-v2:0"
+embedding_dimensions = 1024        # 1024 = best quality; 512/256 = cheaper. IMMUTABLE.
+distance_metric      = "cosine"    # IMMUTABLE.
+
+chunking_strategy              = "HIERARCHICAL"
+hierarchical_parent_max_tokens = 1500
+hierarchical_child_max_tokens  = 300
+hierarchical_overlap_tokens    = 60
+
+# Folder-derived metadata (topic/owner/subpath/doc_type/file_name/source_path)
+# stays FILTERABLE by default — do not list those here. Only add keys you want
+# stored but NOT usable as query filters. IMMUTABLE once the index exists.
+extra_non_filterable_metadata_keys = []
+
+enable_advanced_parsing = true
+parsing_model_id        = "anthropic.claude-3-haiku-20240307-v1:0"
+
+# ----- Generation (query time; cheap for home use) ------------------------
+generation_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
+
+# ----- API throttling / logs ---------------------------------------------
+api_throttle_burst_limit  = 5
+api_throttle_rate_limit   = 2
+lambda_log_retention_days = 30
+
+# ----- Auto-sync ----------------------------------------------------------
+enable_auto_sync = true

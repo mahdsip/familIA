@@ -1,0 +1,14 @@
+{
+  "_comment": "Copy to familia.config.json (gitignored) on the machine that holds your documents. Map each folder alias (as it appears in your directory names) to a display name. Folder matching is case-insensitive and accent-insensitive. NEVER commit the real file to a public repo.",
+  "owners": {
+    "alice": "Alice Example",
+    "bob": "Bob Example",
+    "kid1": "Kid One Example",
+    "kid2": "Kid Two Example"
+  },
+  "options": {
+    "layout": "auto",
+    "default_owner": "shared",
+    "default_topic": "general"
+  }
+}
