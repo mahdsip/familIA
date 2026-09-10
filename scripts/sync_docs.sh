@@ -8,6 +8,15 @@
 #   - AWS CLI v2, configured with credentials that can write the bucket
 #   - this script + generate_metadata.py + familia.config.json in the same dir
 #
+# CREDENTIALS: resolved via the standard AWS chain, so any of these work with
+# no change — you do NOT have to use AWS_PROFILE:
+#   - Exported env vars: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+#     (+ AWS_SESSION_TOKEN for temporary creds)
+#   - A named profile: AWS_PROFILE=<name>
+#   - SSO / instance / container roles
+# Region comes from AWS_REGION / AWS_DEFAULT_REGION, the profile, or the
+# bucket's own region.
+#
 # What it does, for EACH root, every run:
 #   1. Regenerates the <file>.metadata.json sidecars from the CURRENT folder
 #      structure (recursively, all subfolders). If you reorganised folders, the
@@ -22,7 +31,8 @@
 #   s3://<bucket>/<prefix>/<root-basename>/<your folder tree...>
 # Override a root's subprefix by passing "path=subname" instead of just "path".
 #
-# Usage:
+# Usage (credentials via env vars, a profile, or SSO — see CREDENTIALS above):
+#   ./sync_docs.sh <bucket-name> <prefix> <root> [<root> ...]
 #   AWS_PROFILE=<profile> ./sync_docs.sh <bucket-name> <prefix> <root> [<root> ...]
 #
 #   <prefix> may be empty ("") to sync at the bucket root.
@@ -43,6 +53,18 @@ shift 2
 [ "$#" -ge 1 ] || { echo "Provide at least one document root." >&2; exit 1; }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Fail fast if no usable AWS credentials resolve from the standard chain
+# (exported env vars, AWS_PROFILE, SSO, instance role, ...). This avoids
+# failing halfway through an upload.
+if ! CALLER="$(aws sts get-caller-identity --query Arn --output text 2>/dev/null)"; then
+  echo "ERROR: no valid AWS credentials found." >&2
+  echo "Provide credentials via exported env vars (AWS_ACCESS_KEY_ID/" >&2
+  echo "AWS_SECRET_ACCESS_KEY[/AWS_SESSION_TOKEN]), a profile (AWS_PROFILE=<name>)," >&2
+  echo "or an SSO login, then re-run." >&2
+  exit 1
+fi
+echo "==> Using AWS identity: ${CALLER}"
 
 any_changes=0
 

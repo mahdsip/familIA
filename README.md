@@ -174,6 +174,24 @@ The document machine does not need the Terraform repo — just Python 3, AWS CLI
 and three files from `scripts/`: `sync_docs.sh`, `generate_metadata.py`, and
 your own `familia.config.json`. Copy them over and run from there.
 
+**Credentials** are resolved via the standard AWS chain, so use whichever you
+already have — no `AWS_PROFILE` required:
+
+```bash
+# Option 1: exported environment variables (temporary or long-lived)
+export AWS_ACCESS_KEY_ID=...        # + AWS_SECRET_ACCESS_KEY
+export AWS_SECRET_ACCESS_KEY=...    # + AWS_SESSION_TOKEN if temporary
+export AWS_REGION=eu-central-1
+
+# Option 2: a named profile
+export AWS_PROFILE=<name>
+
+# Option 3: SSO login (aws sso login --profile <name>)
+```
+
+`sync_docs.sh` runs a credential preflight (`aws sts get-caller-identity`) and
+prints the resolved identity, failing fast with guidance if none is found.
+
 **One-time setup on the document machine:**
 
 ```bash
