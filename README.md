@@ -191,14 +191,28 @@ to `"topic_owner"` or `"owner_topic"` to force an order instead of `"auto"`.
 **Every sync (manual or weekly cron):**
 
 ```bash
+# Args: <bucket> <prefix> <root> [<root> ...]   (prefix may be "")
 # Regenerates metadata from the CURRENT folder structure (so reorganising
 # folders updates metadata), then mirrors documents + sidecars to S3.
-AWS_PROFILE=<profile> ./scripts/sync_docs.sh "$HOME/Documents/Family" \
-  "<docs-bucket-name>" documents
+AWS_PROFILE=<profile> ./scripts/sync_docs.sh \
+  "<docs-bucket-name>" documents "$HOME/Documents/Family"
 
-# Preview metadata changes without writing or uploading anything:
+# Multiple roots: each is mirrored into its OWN subprefix (named after the
+# root's folder) so they never delete each other under --delete:
+AWS_PROFILE=<profile> ./scripts/sync_docs.sh \
+  "<docs-bucket-name>" documents "$HOME/Documents/Family" "$HOME/Scans"
+
+# Override a root's subprefix with "path=subname":
+AWS_PROFILE=<profile> ./scripts/sync_docs.sh \
+  "<docs-bucket-name>" documents "/mnt/nas/health=salud" "/mnt/nas/school=colegio"
+
+# Preview metadata changes for a root without writing or uploading anything:
 python3 scripts/generate_metadata.py "$HOME/Documents/Family" --dry-run --prune
 ```
+
+Each root is synced recursively (all subfolders). `topic`/`owner` metadata is
+derived from the folders *inside* each root, so the subprefix does not affect
+your `topic/owner` scheme.
 
 Uploading objects triggers the auto-sync Lambda, which starts a Knowledge Base
 ingestion job. A weekly schedule (Sun 03:00 Europe/Madrid) is a safety net. You
