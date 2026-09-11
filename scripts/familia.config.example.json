@@ -9,6 +9,7 @@
   "options": {
     "layout": "auto",
     "default_owner": "shared",
-    "default_topic": "general"
+    "default_topic": "general",
+    "ignore_folders": ["documents", "docs", "documentos"]
   }
 }

@@ -30,13 +30,20 @@ PRIVACY: the mapping of folder aliases to real names lives ONLY in
 familia.config.json on your data machine (gitignored). This script and the repo
 contain no personal data.
 
+Owner detection is ROOT-INDEPENDENT: the script scans the whole path for the
+first folder matching a known owner alias, then takes the topic from the folder
+next to it. So the same document classifies identically whether you sync from
+".../<topic>" or ".../<topic>/<owner>". Wrapper folders (e.g. the S3 sync prefix
+"documents") are skipped when choosing the topic — see options.ignore_folders.
+
 Config (familia.config.json, next to this script or via --config):
     {
       "owners": { "<folder-alias>": "<display name>", ... },
       "options": {
         "layout": "auto" | "topic_owner" | "owner_topic",
         "default_owner": "shared",
-        "default_topic": "general"
+        "default_topic": "general",
+        "ignore_folders": ["documents", "docs", "documentos"]
       }
     }
 
@@ -64,6 +71,9 @@ DEFAULT_OPTIONS = {
     "layout": "auto",
     "default_owner": "shared",
     "default_topic": "general",
+    # Wrapper/prefix folders that are NOT real topics (e.g. the S3 sync prefix).
+    # When choosing the topic next to the owner, these are skipped.
+    "ignore_folders": ["documents", "docs", "documentos"],
 }
 
 
@@ -112,40 +122,62 @@ def classify(folders: list[str], owners: dict, options: dict) -> tuple[str, str,
     default_owner = options["default_owner"]
     default_topic = options["default_topic"]
 
-    seg0 = folders[0] if len(folders) >= 1 else ""
-    seg1 = folders[1] if len(folders) >= 2 else ""
-    n0, n1 = _norm(seg0), _norm(seg1)
-    rest = folders[2:]
+    norm_folders = [_norm(f) for f in folders]
 
     def is_owner(n: str) -> bool:
         return n in owners
 
-    topic = owner = None
+    # ---- Locate the owner ANYWHERE in the path -------------------------------
+    # This makes classification independent of the local sync root: whether you
+    # pass ".../<topic>" or ".../<topic>/<owner>" as the root, the owner is
+    # found the same way. The first path segment that matches a known owner
+    # alias (from familia.config.json) wins.
+    owner_idx = next((i for i, n in enumerate(norm_folders) if is_owner(n)), None)
 
-    if layout == "auto":
-        if is_owner(n0) and not is_owner(n1):
-            owner, topic = n0, (seg1 or default_topic)
-        elif is_owner(n1) and not is_owner(n0):
-            topic, owner = (seg0 or default_topic), n1
-        elif is_owner(n0) and is_owner(n1):
-            # Both look like owners; treat first as owner, second as topic.
-            owner, topic = n0, seg1
-        else:
-            # Neither matches a known owner: assume topic/owner ordering and
-            # fall back to defaults for missing pieces.
+    ignore = {_norm(f) for f in options.get("ignore_folders", [])}
+
+    def usable(seg: str) -> bool:
+        return bool(seg) and _norm(seg) not in ignore
+
+    if owner_idx is not None:
+        owner = norm_folders[owner_idx]
+        # Topic = the folder next to the owner, skipping wrapper folders like the
+        # sync prefix. Respect layout; in "auto", prefer the folder BEFORE the
+        # owner (topic/owner), else the folder AFTER (owner/topic).
+        before = folders[owner_idx - 1] if owner_idx >= 1 else ""
+        after = folders[owner_idx + 1] if owner_idx + 1 < len(folders) else ""
+        before_ok = usable(before)
+        after_ok = usable(after)
+
+        if layout == "owner_topic":
+            topic = after if after_ok else (before if before_ok else default_topic)
+            used_after = after_ok
+        elif layout == "topic_owner":
+            topic = before if before_ok else (after if after_ok else default_topic)
+            used_after = (not before_ok) and after_ok
+        else:  # auto: topic/owner is the common case, so prefer 'before'
+            topic = before if before_ok else (after if after_ok else default_topic)
+            used_after = (not before_ok) and after_ok
+
+        # subpath = everything after the owner, minus the folder used as topic.
+        tail = folders[owner_idx + 2:] if used_after else folders[owner_idx + 1:]
+        subpath = "/".join(tail)
+    else:
+        # No known owner in the path: fall back to positional heuristics on the
+        # first two folders, honouring the configured layout.
+        seg0 = folders[0] if len(folders) >= 1 else ""
+        seg1 = folders[1] if len(folders) >= 2 else ""
+        if layout == "owner_topic":
+            owner = _norm(seg0) or default_owner
+            topic = seg1 or default_topic
+            subpath = "/".join(folders[2:])
+        else:  # topic_owner or auto
             topic = seg0 or default_topic
-            owner = n1 or default_owner
-    elif layout == "topic_owner":
-        topic = seg0 or default_topic
-        owner = n1 or default_owner
-    else:  # owner_topic
-        owner = n0 or default_owner
-        topic = seg1 or default_topic
+            owner = _norm(seg1) or default_owner
+            subpath = "/".join(folders[2:])
 
-    # If the resolved owner isn't a known alias, keep it but flag no display name.
     owner_alias = _norm(owner) if owner else default_owner
     topic = topic or default_topic
-    subpath = "/".join(rest)
     return _clean(topic), _clean(owner_alias), _clean(subpath)
 
 
