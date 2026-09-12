@@ -257,6 +257,22 @@ DS=$(cd terraform && terraform output -raw data_source_id)
 `failed` counts in the output include the intentionally-skipped media/app files;
 inspect `failureReasons` on a job if the number looks wrong.
 
+### Multimodal parsing (scanned images)
+
+`parsing_modality = "MULTIMODAL"` (default) lets the parser read text from
+scanned images (JPG/PNG) — photographed IDs, certificates, medical reports —
+not just text documents. This requires a **supplemental data storage bucket**
+(`<project>-supplemental-<account>`, created automatically) where Bedrock stores
+extracted image artifacts. HEIC and DICOM are not supported by Bedrock parsing.
+
+### Source citations
+
+Answers always include a `sources` array (S3 URI + `owner`/`topic`/`source_path`).
+Note: supplying a **custom generation prompt template suppresses citations** in
+RetrieveAndGenerate, so the query Lambda uses Bedrock's default template by
+default (`PROMPT_TEMPLATE` env unset). Only set `PROMPT_TEMPLATE` if you accept
+losing source attribution.
+
 ### Models & inference profiles
 
 Newer Bedrock models (e.g. Claude Haiku 4.5) are not available on-demand and are

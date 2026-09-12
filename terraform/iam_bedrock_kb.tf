@@ -29,23 +29,42 @@ resource "aws_iam_role_policy" "kb_s3_docs" {
   role = aws_iam_role.bedrock_kb.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Sid      = "ListBucket"
-        Effect   = "Allow"
-        Action   = ["s3:ListBucket"]
-        Resource = [aws_s3_bucket.docs.arn]
-      },
-      {
-        Sid      = "GetObjects"
-        Effect   = "Allow"
-        Action   = ["s3:GetObject"]
-        Resource = ["${aws_s3_bucket.docs.arn}/*"]
-        Condition = {
-          StringEquals = { "aws:ResourceAccount" = local.account_id }
+    Statement = concat(
+      [
+        {
+          Sid      = "ListBucket"
+          Effect   = "Allow"
+          Action   = ["s3:ListBucket"]
+          Resource = [aws_s3_bucket.docs.arn]
+        },
+        {
+          Sid      = "GetObjects"
+          Effect   = "Allow"
+          Action   = ["s3:GetObject"]
+          Resource = ["${aws_s3_bucket.docs.arn}/*"]
+          Condition = {
+            StringEquals = { "aws:ResourceAccount" = local.account_id }
+          }
+        },
+      ],
+      local.create_supplemental ? [
+        {
+          # Read/write extracted multimodal artifacts in the supplemental bucket.
+          Sid    = "SupplementalBucket"
+          Effect = "Allow"
+          Action = [
+            "s3:PutObject",
+            "s3:GetObject",
+            "s3:DeleteObject",
+            "s3:ListBucket"
+          ]
+          Resource = [
+            aws_s3_bucket.supplemental[0].arn,
+            "${aws_s3_bucket.supplemental[0].arn}/*",
+          ]
         }
-      }
-    ]
+      ] : [],
+    )
   })
 }
 

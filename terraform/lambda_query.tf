@@ -52,7 +52,10 @@ resource "aws_iam_role_policy" "query_lambda" {
         # cross-region foundation model it routes to.
         Sid    = "InvokeGenerationModel"
         Effect = "Allow"
-        Action = ["bedrock:InvokeModel"]
+        Action = [
+          "bedrock:InvokeModel",
+          "bedrock:GetInferenceProfile"
+        ]
         Resource = distinct(concat(
           [local.generation_model_arn],
           var.use_inference_profiles ? [local.generation_fm_wildcard_arn] : [],

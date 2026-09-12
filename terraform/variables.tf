@@ -149,6 +149,16 @@ variable "parsing_model_id" {
   default     = "anthropic.claude-haiku-4-5-20251001-v1:0"
 }
 
+variable "parsing_modality" {
+  description = <<-EOT
+    Parsing modality for advanced parsing. "MULTIMODAL" lets the model read
+    scanned images (JPG/PNG) as well as text documents — needed for photographed
+    IDs, certificates and reports. Set to null/"" for text-only parsing.
+  EOT
+  type        = string
+  default     = "MULTIMODAL"
+}
+
 variable "use_inference_profiles" {
   description = <<-EOT
     Newer Bedrock models (e.g. Claude Haiku 4.5) are not available on-demand and

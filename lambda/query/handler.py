@@ -41,7 +41,12 @@ DEFAULT_PROMPT = (
     "Mention which document the information comes from.\n\n"
     "Search results:\n$search_results$\n\nQuestion: $query$\n\nAnswer:"
 )
-PROMPT_TEMPLATE = os.environ.get("PROMPT_TEMPLATE", DEFAULT_PROMPT)
+# IMPORTANT: A custom promptTemplate SUPPRESSES RetrieveAndGenerate citations,
+# and returning the source file is a hard requirement. So we DO NOT send a
+# custom template by default (empty => Bedrock's default, which keeps citations
+# and still produces grounded answers). Set PROMPT_TEMPLATE explicitly only if
+# you accept losing source citations. DEFAULT_PROMPT is kept for reference.
+PROMPT_TEMPLATE = os.environ.get("PROMPT_TEMPLATE", "").strip()
 
 _bedrock = boto3.client(
     "bedrock-agent-runtime",
@@ -105,18 +110,23 @@ def handler(event, context):
     if retrieval_filter:
         vector_search["filter"] = retrieval_filter
 
+    kb_config = {
+        "knowledgeBaseId": KNOWLEDGE_BASE_ID,
+        "modelArn": MODEL_ARN,
+        "retrievalConfiguration": {"vectorSearchConfiguration": vector_search},
+    }
+    # Only send a custom prompt template if explicitly configured — otherwise
+    # Bedrock's default is used, which preserves source citations.
+    if PROMPT_TEMPLATE:
+        kb_config["generationConfiguration"] = {
+            "promptTemplate": {"textPromptTemplate": PROMPT_TEMPLATE}
+        }
+
     request = {
         "input": {"text": question},
         "retrieveAndGenerateConfiguration": {
             "type": "KNOWLEDGE_BASE",
-            "knowledgeBaseConfiguration": {
-                "knowledgeBaseId": KNOWLEDGE_BASE_ID,
-                "modelArn": MODEL_ARN,
-                "retrievalConfiguration": {"vectorSearchConfiguration": vector_search},
-                "generationConfiguration": {
-                    "promptTemplate": {"textPromptTemplate": PROMPT_TEMPLATE}
-                },
-            },
+            "knowledgeBaseConfiguration": kb_config,
         },
     }
     if session_id:

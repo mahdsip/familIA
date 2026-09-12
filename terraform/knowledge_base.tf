@@ -22,6 +22,21 @@ resource "aws_bedrockagent_knowledge_base" "main" {
           embedding_data_type = "FLOAT32"
         }
       }
+
+      # MULTIMODAL parsing extracts images from documents; Bedrock needs an S3
+      # location to store those extracted artifacts. Required whenever the data
+      # source uses parsing_modality = MULTIMODAL.
+      dynamic "supplemental_data_storage_configuration" {
+        for_each = local.create_supplemental ? [1] : []
+        content {
+          storage_location {
+            type = "S3"
+            s3_location {
+              uri = "s3://${aws_s3_bucket.supplemental[0].id}"
+            }
+          }
+        }
+      }
     }
   }
 
@@ -112,6 +127,10 @@ resource "aws_bedrockagent_data_source" "docs" {
         parsing_strategy = "BEDROCK_FOUNDATION_MODEL"
         bedrock_foundation_model_configuration {
           model_arn = local.parsing_model_arn
+          # MULTIMODAL lets the parser read scanned images (JPG/PNG) — your
+          # DNI cards, certificates and photographed reports — not just text
+          # documents. Without it, images are rejected as "unsupported format".
+          parsing_modality = var.parsing_modality
           parsing_prompt {
             parsing_prompt_string = <<-EOT
               Transcribe the document into clean, well-structured text.
