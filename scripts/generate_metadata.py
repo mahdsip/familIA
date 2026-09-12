@@ -114,12 +114,15 @@ def load_config(explicit_path: str | None, script_dir: str) -> dict:
     return {"owners": owners, "options": options}
 
 
-def classify(folders: list[str], owners: dict, options: dict) -> tuple[str, str, str]:
+def classify(folders: list[str], owners: dict, options: dict,
+             topic_hint: str = "") -> tuple[str, str, str]:
     """Return (topic, owner_alias, subpath) from the folder segments.
 
-    Auto-detection: whichever of the first two segments matches a known owner
-    is the owner; the other is the topic. Falls back to the configured layout
-    or defaults when neither matches.
+    Auto-detection: whichever segment matches a known owner is the owner; the
+    adjacent folder is the topic. When the owner is the first folder inside the
+    root (so there is no topic folder in the relative path), `topic_hint` — the
+    root's own folder name — is used as the topic. Falls back to configured
+    layout / defaults otherwise.
     """
     layout = options["layout"]
     default_owner = options["default_owner"]
@@ -142,42 +145,49 @@ def classify(folders: list[str], owners: dict, options: dict) -> tuple[str, str,
     def usable(seg: str) -> bool:
         return bool(seg) and _norm(seg) not in ignore
 
+    # The root's own folder name is a topic candidate (used when the owner is
+    # the first folder inside the root, so no topic folder appears in the path).
+    hint = topic_hint if usable(topic_hint) else ""
+
     if owner_idx is not None:
         owner = norm_folders[owner_idx]
         # Topic = the folder next to the owner, skipping wrapper folders like the
         # sync prefix. Respect layout; in "auto", prefer the folder BEFORE the
-        # owner (topic/owner), else the folder AFTER (owner/topic).
+        # owner (topic/owner), else the folder AFTER (owner/topic), else the
+        # root basename hint, else the default.
         before = folders[owner_idx - 1] if owner_idx >= 1 else ""
         after = folders[owner_idx + 1] if owner_idx + 1 < len(folders) else ""
         before_ok = usable(before)
         after_ok = usable(after)
 
         if layout == "owner_topic":
-            topic = after if after_ok else (before if before_ok else default_topic)
+            # owner/topic: the folder AFTER the owner is the topic; anything
+            # beyond that is subpath.
+            topic = after if after_ok else (before if before_ok else (hint or default_topic))
             used_after = after_ok
-        elif layout == "topic_owner":
-            topic = before if before_ok else (after if after_ok else default_topic)
-            used_after = (not before_ok) and after_ok
-        else:  # auto: topic/owner is the common case, so prefer 'before'
-            topic = before if before_ok else (after if after_ok else default_topic)
-            used_after = (not before_ok) and after_ok
+        else:
+            # topic_owner / auto: the topic is the folder BEFORE the owner, or
+            # the root-name hint when the owner is the first folder. Everything
+            # AFTER the owner is subpath (never the topic).
+            topic = before if before_ok else (hint or default_topic)
+            used_after = False
 
-        # subpath = everything after the owner, minus the folder used as topic.
+        # subpath = everything after the owner, minus the folder used as topic
+        # (only in owner/topic layout, where 'after' was consumed as the topic).
         tail = folders[owner_idx + 2:] if used_after else folders[owner_idx + 1:]
         subpath = "/".join(tail)
     else:
-        # No known owner in the path: fall back to positional heuristics on the
-        # first two folders, honouring the configured layout.
-        seg0 = folders[0] if len(folders) >= 1 else ""
-        seg1 = folders[1] if len(folders) >= 2 else ""
-        if layout == "owner_topic":
-            owner = _norm(seg0) or default_owner
-            topic = seg1 or default_topic
-            subpath = "/".join(folders[2:])
-        else:  # topic_owner or auto
-            topic = seg0 or default_topic
-            owner = _norm(seg1) or default_owner
-            subpath = "/".join(folders[2:])
+        # No known owner anywhere in the path -> shared document. The topic is
+        # the root-name hint (the folder each root maps to, e.g. "salud") when
+        # available, else the first usable folder; everything else is subpath.
+        owner = default_owner
+        if hint:
+            topic = hint
+            subpath = "/".join(folders)
+        else:
+            seg0 = folders[0] if len(folders) >= 1 else ""
+            topic = seg0 if usable(seg0) else default_topic
+            subpath = "/".join(folders[1:]) if usable(seg0) else "/".join(folders)
 
     owner_alias = _norm(owner) if owner else default_owner
     topic = topic or default_topic
@@ -196,7 +206,9 @@ def build_payload(root: str, file_path: str, cfg: dict) -> dict:
     file_name = parts[-1]
     folders = parts[:-1]
 
-    topic, owner_alias, subpath = classify(folders, cfg["owners"], cfg["options"])
+    topic, owner_alias, subpath = classify(
+        folders, cfg["owners"], cfg["options"], topic_hint=os.path.basename(root)
+    )
     ext = os.path.splitext(file_name)[1].lstrip(".").lower() or "unknown"
 
     attrs = {
