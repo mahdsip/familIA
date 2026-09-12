@@ -48,8 +48,11 @@ Config (familia.config.json, next to this script or via --config):
     }
 
 Usage:
-    python3 generate_metadata.py <local-docs-root> [--config PATH]
+    python3 generate_metadata.py <root> [<root> ...] [--config PATH]
                                  [--dry-run] [--prune]
+
+    Accepts one or more local document roots (e.g. your "salud" and
+    "Documentación" folders), processing each independently.
 
 Idempotent. Re-running rewrites sidecars to match the CURRENT tree, so if you
 reorganise folders the metadata updates on the next run. --prune removes
@@ -211,22 +214,8 @@ def build_payload(root: str, file_path: str, cfg: dict) -> dict:
     return {"metadataAttributes": attrs}
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("root", help="Local documents root (the folder you sync to S3)")
-    ap.add_argument("--config", help="Path to familia.config.json (default: next to this script)")
-    ap.add_argument("--dry-run", action="store_true", help="Print what would change, write nothing")
-    ap.add_argument("--prune", action="store_true", help="Delete orphan .metadata.json files")
-    args = ap.parse_args()
-
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    cfg = load_config(args.config, script_dir)
-
-    root = os.path.abspath(args.root)
-    if not os.path.isdir(root):
-        print(f"Not a directory: {root}", file=sys.stderr)
-        return 2
-
+def process_root(root: str, cfg: dict, dry_run: bool, prune: bool) -> tuple[int, int, int]:
+    """Generate/update sidecars for one root. Returns (written, changed, pruned)."""
     written = changed = pruned = 0
     for dirpath, _dirnames, filenames in os.walk(root):
         docs = {f for f in filenames if is_document(f)}
@@ -244,7 +233,7 @@ def main() -> int:
                     old_text = fh.read()
             is_change = old_text != new_text
 
-            if args.dry_run:
+            if dry_run:
                 if is_change:
                     print(f"[dry-run] {'update' if old_text else 'create'}: {sidecar}")
             elif is_change:
@@ -254,22 +243,47 @@ def main() -> int:
             if is_change:
                 changed += 1
 
-        if args.prune:
+        if prune:
             for name in filenames:
                 if name.endswith(".metadata.json"):
                     doc = name[: -len(".metadata.json")]
                     if doc not in docs:
                         orphan = os.path.join(dirpath, name)
-                        if args.dry_run:
+                        if dry_run:
                             print(f"[dry-run] prune orphan: {orphan}")
                         else:
                             os.remove(orphan)
                         pruned += 1
+    return written, changed, pruned
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("roots", nargs="+", help="One or more local document roots to process")
+    ap.add_argument("--config", help="Path to familia.config.json (default: next to this script)")
+    ap.add_argument("--dry-run", action="store_true", help="Print what would change, write nothing")
+    ap.add_argument("--prune", action="store_true", help="Delete orphan .metadata.json files")
+    args = ap.parse_args()
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    cfg = load_config(args.config, script_dir)
+
+    total_written = total_changed = total_pruned = 0
+    for raw in args.roots:
+        root = os.path.abspath(raw)
+        if not os.path.isdir(root):
+            print(f"!! Skipping '{raw}': not a directory", file=sys.stderr)
+            continue
+        print(f"== Root: {root}")
+        w, c, p = process_root(root, cfg, args.dry_run, args.prune)
+        total_written += w
+        total_changed += c
+        total_pruned += p
 
     verb = "Would process" if args.dry_run else "Processed"
-    print(f"{verb} {written} document(s); {changed} metadata change(s).", end="")
+    print(f"{verb} {total_written} document(s); {total_changed} metadata change(s).", end="")
     if args.prune:
-        print(f" {pruned} orphan(s) pruned.", end="")
+        print(f" {total_pruned} orphan(s) pruned.", end="")
     print()
     return 0
 
