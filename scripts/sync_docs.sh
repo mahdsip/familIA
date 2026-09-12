@@ -54,6 +54,18 @@ shift 2
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# DRY_RUN=1 verifies what WOULD happen without changing anything: metadata is
+# not written and no objects are uploaded or deleted. Use it to test the script
+# safely, e.g.:  DRY_RUN=1 ./sync_docs.sh <bucket> documents "<root>"
+DRY_RUN="${DRY_RUN:-0}"
+META_FLAGS=(--prune)
+SYNC_FLAGS=()
+if [ "${DRY_RUN}" != "0" ]; then
+  echo "*** DRY RUN — no metadata written, no uploads/deletes performed ***"
+  META_FLAGS+=(--dry-run)
+  SYNC_FLAGS+=(--dryrun)
+fi
+
 # Only these file types are useful to a text/RAG knowledge base. We upload an
 # ALLOWLIST (exclude everything, then re-include these), which keeps out media
 # (mp4/heic), medical imaging (dcm) and bundled app internals (dll/jar/exe/nib)
@@ -109,7 +121,7 @@ for ARG in "$@"; do
 
   # 1. Regenerate metadata sidecars for this root (recursive, --prune orphans).
   echo "==> Updating metadata from folder structure..."
-  META_OUT="$(python3 "${SCRIPT_DIR}/generate_metadata.py" "${ROOT}" --prune)"
+  META_OUT="$(python3 "${SCRIPT_DIR}/generate_metadata.py" "${ROOT}" "${META_FLAGS[@]}")"
   echo "    ${META_OUT}"
 
   # 2. Mirror documents + sidecars to this root's subprefix. Allowlist: exclude
@@ -117,10 +129,13 @@ for ARG in "$@"; do
   #    removes any previously-uploaded junk (media/app files) from S3 for this
   #    subprefix, so re-running cleans up past over-uploads.
   echo "==> Syncing (documents + sidecars only)..."
+  # Note the ${arr[@]+"${arr[@]}"} idiom: safe expansion of a possibly-empty
+  # array under `set -u` on bash 3.2 (macOS default).
   SYNC_OUT="$(aws s3 sync "${ROOT}" "${DEST}" \
     --delete \
     --exclude "*" \
     "${INCLUDES[@]}" \
+    ${SYNC_FLAGS[@]+"${SYNC_FLAGS[@]}"} \
     --sse aws:kms)"
 
   if [ -n "${SYNC_OUT}" ]; then
