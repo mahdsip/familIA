@@ -144,9 +144,27 @@ variable "enable_advanced_parsing" {
 }
 
 variable "parsing_model_id" {
-  description = "Bedrock model id used for advanced document parsing (only when enable_advanced_parsing = true)."
+  description = "Bedrock model id used for advanced document parsing (only when enable_advanced_parsing = true). Use a current (non-legacy) multimodal model."
   type        = string
-  default     = "anthropic.claude-3-haiku-20240307-v1:0"
+  default     = "anthropic.claude-haiku-4-5-20251001-v1:0"
+}
+
+variable "use_inference_profiles" {
+  description = <<-EOT
+    Newer Bedrock models (e.g. Claude Haiku 4.5) are not available on-demand and
+    must be invoked through a regional inference profile. When true, the parsing
+    and generation model ids are wrapped as inference-profile ARNs using
+    inference_profile_region_prefix. Set false only if you switch both models
+    back to ones that support on-demand throughput.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "inference_profile_region_prefix" {
+  description = "Region prefix for Bedrock inference profiles (e.g. 'eu', 'us', 'apac'). 'eu' keeps inference within the EU for data residency."
+  type        = string
+  default     = "eu"
 }
 
 # ----- Generation model (query time) -------------------------------------
@@ -155,10 +173,11 @@ variable "generation_model_id" {
   description = <<-EOT
     Bedrock model id used to generate answers from retrieved chunks. Query-time
     cost is tiny for a home workload, so this favours quality but stays cheap.
-    Configurable so you can swap models without touching architecture.
+    Configurable so you can swap models without touching architecture (e.g.
+    amazon.nova-lite-v1:0 for an even cheaper option).
   EOT
   type        = string
-  default     = "anthropic.claude-3-haiku-20240307-v1:0"
+  default     = "anthropic.claude-haiku-4-5-20251001-v1:0"
 }
 
 # ----- Query API / access -------------------------------------------------

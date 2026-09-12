@@ -40,10 +40,11 @@ hierarchical_overlap_tokens    = 60
 extra_non_filterable_metadata_keys = []
 
 enable_advanced_parsing = true
-parsing_model_id        = "anthropic.claude-3-haiku-20240307-v1:0"
+parsing_model_id        = "anthropic.claude-haiku-4-5-20251001-v1:0"
 
 # ----- Generation (query time; cheap for home use) ------------------------
-generation_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
+# Current-gen Haiku for quality; swap to amazon.nova-lite-v1:0 for lower cost.
+generation_model_id = "anthropic.claude-haiku-4-5-20251001-v1:0"
 
 # ----- API throttling / logs ---------------------------------------------
 api_throttle_burst_limit  = 5

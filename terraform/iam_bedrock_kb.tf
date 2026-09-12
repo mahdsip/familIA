@@ -59,12 +59,20 @@ resource "aws_iam_role_policy" "kb_bedrock_models" {
       Sid    = "InvokeEmbeddingAndParsingModels"
       Effect = "Allow"
       Action = [
-        "bedrock:InvokeModel"
+        "bedrock:InvokeModel",
+        # Required so the KB can resolve the inference profile it invokes.
+        "bedrock:GetInferenceProfile"
       ]
-      Resource = distinct([
-        local.embedding_model_arn,
-        local.parsing_model_arn,
-      ])
+      # Embedding (on-demand FM), the parsing model (inference profile ARN when
+      # use_inference_profiles), and the underlying cross-region foundation
+      # model the profile routes to — inference profiles need both granted.
+      Resource = distinct(concat(
+        [
+          local.embedding_model_arn,
+          local.parsing_model_arn,
+        ],
+        var.use_inference_profiles ? [local.parsing_fm_wildcard_arn] : [],
+      ))
     }]
   })
 }

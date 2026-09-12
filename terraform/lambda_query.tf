@@ -47,11 +47,16 @@ resource "aws_iam_role_policy" "query_lambda" {
         Resource = "arn:${local.partition}:bedrock:${var.aws_region}:${local.account_id}:knowledge-base/*"
       },
       {
-        # RetrieveAndGenerate invokes the generation model under the hood.
-        Sid      = "InvokeGenerationModel"
-        Effect   = "Allow"
-        Action   = ["bedrock:InvokeModel"]
-        Resource = local.generation_model_arn
+        # RetrieveAndGenerate invokes the generation model under the hood. With
+        # inference profiles, grant both the profile ARN and the underlying
+        # cross-region foundation model it routes to.
+        Sid    = "InvokeGenerationModel"
+        Effect = "Allow"
+        Action = ["bedrock:InvokeModel"]
+        Resource = distinct(concat(
+          [local.generation_model_arn],
+          var.use_inference_profiles ? [local.generation_fm_wildcard_arn] : [],
+        ))
       }
     ]
   })

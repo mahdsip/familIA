@@ -32,18 +32,28 @@ resource "aws_s3vectors_index" "main" {
   dimension       = var.embedding_dimensions
   distance_metric = var.distance_metric
 
-  # Metadata strategy (drives retrieval precision):
-  #   * All metadata keys are FILTERABLE by default in S3 Vectors. Our folder-
-  #     derived attributes (topic, owner, subpath, doc_type, file_name,
-  #     source_path) therefore become filterable automatically, so the query
-  #     Lambda can narrow retrieval by owner/topic and always return the source.
-  #   * The raw chunk text Bedrock stores under AMAZON_BEDROCK_TEXT is large and
-  #     must be NON-filterable, otherwise it blows the S3 Vectors filterable-
-  #     metadata size budget (~2KB/vector) and ingestion fails.
-  #   * non_filterable_metadata_keys is IMMUTABLE after creation — pinned here.
+  # Metadata strategy (drives retrieval precision AND stays under the S3 Vectors
+  # 2KB filterable-metadata budget):
+  #   * Keep ONLY the small, high-value keys filterable: topic, owner, doc_type.
+  #     These are what the query Lambda filters on.
+  #   * Everything large or long — the raw chunk text, Bedrock's source-URI
+  #     metadata, and our long path-like attrs (source_path, file_name, subpath,
+  #     owner_name) — is NON-filterable. It's still RETURNED with results (so
+  #     citations keep the source path), just not usable as a filter. This
+  #     prevents deeply-nested paths from blowing the 2KB filterable limit.
+  #   * non_filterable_metadata_keys is IMMUTABLE; changing it recreates the
+  #     index (and requires re-ingestion) — acceptable as vectors are derived.
   metadata_configuration {
     non_filterable_metadata_keys = concat(
-      ["AMAZON_BEDROCK_TEXT"],
+      [
+        "AMAZON_BEDROCK_TEXT",         # the chunk text (large)
+        "AMAZON_BEDROCK_METADATA",     # Bedrock internal metadata blob
+        "x-amz-bedrock-kb-source-uri", # full S3 source URI (long)
+        "source_path",                 # our relative path (can be long)
+        "file_name",
+        "subpath",
+        "owner_name",
+      ],
       var.extra_non_filterable_metadata_keys,
     )
   }

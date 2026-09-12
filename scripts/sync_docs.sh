@@ -54,6 +54,21 @@ shift 2
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Only these file types are useful to a text/RAG knowledge base. We upload an
+# ALLOWLIST (exclude everything, then re-include these), which keeps out media
+# (mp4/heic), medical imaging (dcm) and bundled app internals (dll/jar/exe/nib)
+# that Bedrock can't parse and that waste the 1000-file/advanced-parsing budget.
+# Extend DOC_EXTS if you need more document formats.
+DOC_EXTS="pdf txt md csv doc docx xls xlsx ppt pptx html htm json rtf odt"
+
+# Build the --include flags: the .metadata.json sidecars plus each doc type
+# (both lower- and upper-case extensions).
+INCLUDES=(--include "*.metadata.json")
+for e in ${DOC_EXTS}; do
+  E_UPPER="$(printf '%s' "$e" | tr '[:lower:]' '[:upper:]')"
+  INCLUDES+=(--include "*.${e}" --include "*.${E_UPPER}")
+done
+
 # Fail fast if no usable AWS credentials resolve from the standard chain
 # (exported env vars, AWS_PROFILE, SSO, instance role, ...). This avoids
 # failing halfway through an upload.
@@ -97,14 +112,15 @@ for ARG in "$@"; do
   META_OUT="$(python3 "${SCRIPT_DIR}/generate_metadata.py" "${ROOT}" --prune)"
   echo "    ${META_OUT}"
 
-  # 2. Mirror documents + sidecars to this root's subprefix. --delete only
-  #    affects THIS subprefix, so roots don't clobber each other.
-  echo "==> Syncing..."
+  # 2. Mirror documents + sidecars to this root's subprefix. Allowlist: exclude
+  #    everything, then re-include only document types + sidecars. --delete also
+  #    removes any previously-uploaded junk (media/app files) from S3 for this
+  #    subprefix, so re-running cleans up past over-uploads.
+  echo "==> Syncing (documents + sidecars only)..."
   SYNC_OUT="$(aws s3 sync "${ROOT}" "${DEST}" \
     --delete \
-    --exclude ".DS_Store" \
-    --exclude "*/.DS_Store" \
-    --exclude "Thumbs.db" \
+    --exclude "*" \
+    "${INCLUDES[@]}" \
     --sse aws:kms)"
 
   if [ -n "${SYNC_OUT}" ]; then

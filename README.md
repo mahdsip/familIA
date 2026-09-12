@@ -232,10 +232,38 @@ Each root is synced recursively (all subfolders). `topic`/`owner` metadata is
 derived from the folders *inside* each root, so the subprefix does not affect
 your `topic/owner` scheme.
 
+Only document file types are uploaded (an allowlist: `pdf txt md csv doc docx
+xls xlsx ppt pptx html htm json rtf odt` + the `.metadata.json` sidecars).
+Media (`mp4`, `heic`), medical imaging (`dcm`) and bundled application internals
+(`dll`, `jar`, `exe`, `nib`, ...) are intentionally skipped — Bedrock can't
+extract text from them and they consume the advanced-parsing file budget.
+Extend `DOC_EXTS` in `sync_docs.sh` if you need more formats.
+
 Uploading objects triggers the auto-sync Lambda, which starts a Knowledge Base
-ingestion job. A weekly schedule (Sun 03:00 Europe/Madrid) is a safety net. You
-can also trigger a first full ingestion from the Bedrock console or by invoking
-the `familia-auto-sync` Lambda once.
+ingestion job. A weekly schedule (Sun 03:00 Europe/Madrid) is a safety net.
+
+### First / full ingestion (batches)
+
+With advanced parsing enabled, Bedrock indexes at most **1,000 files per
+ingestion job**. If you have more documents than that, run ingestion in batches
+until everything is indexed:
+
+```bash
+KB=$(cd terraform && terraform output -raw knowledge_base_id)
+DS=$(cd terraform && terraform output -raw data_source_id)
+./scripts/ingest.sh "$KB" "$DS"      # loops jobs until 0 new docs indexed
+```
+
+`failed` counts in the output include the intentionally-skipped media/app files;
+inspect `failureReasons` on a job if the number looks wrong.
+
+### Models & inference profiles
+
+Newer Bedrock models (e.g. Claude Haiku 4.5) are not available on-demand and are
+invoked through a regional **inference profile**. `use_inference_profiles`
+(default `true`) and `inference_profile_region_prefix` (default `eu`, keeping
+inference in-region for data residency) control this. Titan v2 embeddings run
+on-demand and need no profile.
 
 ---
 
