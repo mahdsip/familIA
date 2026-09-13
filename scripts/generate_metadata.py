@@ -218,9 +218,6 @@ DEFAULT_OPTIONS = {
     # extension is allowed — e.g. DICOM/medical-imaging slice-export folders.
     # Kept in sync with sync_docs.sh's exclude_path_patterns.
     "exclude_path_patterns": [],
-    # Add file-property metadata (modified_date, file_size_kb, and EXIF
-    # captured_date for JPEGs) to each sidecar. Set false to disable.
-    "enrich_file_metadata": True,
     # Discriminator fields (small, filterable, future-proof for mixed media):
     #   default_content_type — used when the extension matches no media type
     #   content_type_map — override/extend the extension->content_type mapping
@@ -410,11 +407,10 @@ def build_payload(root: str, file_path: str, cfg: dict) -> dict:
     if subpath:
         attrs["subpath"] = subpath
 
-    # File-property enrichment (dates/size) unless disabled in config. These
-    # give the model temporal context (e.g. to prefer the most recent DNI) and
-    # enable date-range filtering. Kept filterable (small values).
-    if cfg["options"].get("enrich_file_metadata", True):
-        attrs.update(file_enrichment(file_path, ext))
+    # File-property enrichment (dates/size). Gives the model temporal context
+    # (e.g. to prefer the most recent DNI) and enables date-range filtering.
+    # Kept filterable (small values).
+    attrs.update(file_enrichment(file_path, ext))
 
     # ---- Discriminator fields (small, filterable, future-proof) -------------
     # content_type: master discriminator once media is mixed in. Auto-derived

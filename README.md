@@ -171,7 +171,7 @@ Retrieval quality is driven by three things, all wired in:
    `file_size_kb`, and — for JPEGs with EXIF — `captured_date` (the real
    photo-taken date, parsed with no external dependency). These are filterable
    (so you can query date ranges) and returned with each chunk, giving the model
-   temporal context. Toggle with `options.enrich_file_metadata` (default true).
+   temporal context.
 
    Note on "use the most recent X" (e.g. the newest DNI photo): RAG ranks by
    relevance, not date, and S3 Vectors has no sort-by-metadata. The dates are

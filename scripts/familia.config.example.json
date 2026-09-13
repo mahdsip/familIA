@@ -20,7 +20,6 @@
       "ihe_pdi", "dicom", "osirix", "weasis", "webexport",
       "expimages", "viewer-windows", "viewer-macosx", ".app", "dicomdir"
     ],
-    "enrich_file_metadata": true,
     "providers": {
       "documents": "personal_backup",
       "images": "photoprism",
