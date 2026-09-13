@@ -107,6 +107,50 @@ for e in ${DOC_EXTS}; do
   INCLUDES+=(--include "*.${e}" --include "*.${E_UPPER}")
 done
 
+# Path substrings whose folders hold DICOM/medical-imaging exports (hundreds of
+# raw slice images that aren't documents). These are EXCLUDED even if their
+# extension is allowed — the real report PDFs sit alongside and are still kept.
+# Loaded from options.exclude_path_patterns in the config; falls back to this
+# default. Matching is case-insensitive on the object key.
+DEFAULT_EXCLUDE_PATTERNS="ihe_pdi dicom osirix weasis webexport expimages viewer-windows viewer-macosx .app dicomdir"
+if [ -f "${CONFIG_FILE}" ]; then
+  CFG_EXCLUDES="$(python3 - "${CONFIG_FILE}" <<'PY'
+import json, sys
+try:
+    cfg = json.load(open(sys.argv[1], encoding="utf-8"))
+    pats = (cfg.get("options", {}) or {}).get("exclude_path_patterns") or []
+    pats = [str(p).strip() for p in pats if str(p).strip()]
+    print("\n".join(pats))
+except Exception:
+    print("")
+PY
+)"
+else
+  CFG_EXCLUDES=""
+fi
+# Use config patterns if present, else the default. (newline-separated to allow
+# patterns containing spaces.)
+if [ -n "${CFG_EXCLUDES}" ]; then
+  EXCLUDE_PATTERNS_RAW="${CFG_EXCLUDES}"
+else
+  EXCLUDE_PATTERNS_RAW="$(printf '%s\n' ${DEFAULT_EXCLUDE_PATTERNS})"
+fi
+
+# Build case-insensitive --exclude flags. For each pattern we add both a
+# lowercase and an uppercase variant plus a *pattern* glob so it matches the
+# substring anywhere in the path. Applied AFTER the includes so path exclusions
+# win over type includes.
+PATH_EXCLUDES=()
+while IFS= read -r pat; do
+  [ -n "${pat}" ] || continue
+  PAT_L="$(printf '%s' "$pat" | tr '[:upper:]' '[:lower:]')"
+  PAT_U="$(printf '%s' "$pat" | tr '[:lower:]' '[:upper:]')"
+  PATH_EXCLUDES+=(--exclude "*${pat}*" --exclude "*${PAT_L}*" --exclude "*${PAT_U}*")
+done <<EOF
+${EXCLUDE_PATTERNS_RAW}
+EOF
+[ ${#PATH_EXCLUDES[@]} -gt 0 ] && echo "==> Excluding medical-imaging paths matching: $(printf '%s ' ${EXCLUDE_PATTERNS_RAW})"
+
 # Fail fast if no usable AWS credentials resolve from the standard chain
 # (exported env vars, AWS_PROFILE, SSO, instance role, ...). This avoids
 # failing halfway through an upload.
@@ -157,10 +201,14 @@ for ARG in "$@"; do
   echo "==> Syncing (documents + sidecars only)..."
   # Note the ${arr[@]+"${arr[@]}"} idiom: safe expansion of a possibly-empty
   # array under `set -u` on bash 3.2 (macOS default).
+  # Filter order matters (last match wins): exclude all, re-include doc types,
+  # then re-exclude medical-imaging paths so slice dumps are dropped even though
+  # their extension is allowed.
   SYNC_OUT="$(aws s3 sync "${ROOT}" "${DEST}" \
     --delete \
     --exclude "*" \
     "${INCLUDES[@]}" \
+    ${PATH_EXCLUDES[@]+"${PATH_EXCLUDES[@]}"} \
     ${SYNC_FLAGS[@]+"${SYNC_FLAGS[@]}"} \
     --sse aws:kms)"
 

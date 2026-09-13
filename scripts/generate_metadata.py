@@ -87,6 +87,10 @@ DEFAULT_OPTIONS = {
     # allowlist so we don't create metadata for files that won't be uploaded.
     # Empty list => generate for ALL files (no extension filtering).
     "allowed_extensions": [],
+    # Path substrings (case-insensitive) whose files are skipped even if the
+    # extension is allowed — e.g. DICOM/medical-imaging slice-export folders.
+    # Kept in sync with sync_docs.sh's exclude_path_patterns.
+    "exclude_path_patterns": [],
 }
 
 
@@ -126,6 +130,13 @@ def load_config(explicit_path: str | None, script_dir: str) -> dict:
         str(e).lstrip(".").strip().lower()
         for e in (options.get("allowed_extensions") or [])
         if str(e).strip()
+    ]
+    # Normalise exclude_path_patterns: lowercase, drop blanks (matched against
+    # the lowercased relative path).
+    options["exclude_path_patterns"] = [
+        str(p).strip().lower()
+        for p in (options.get("exclude_path_patterns") or [])
+        if str(p).strip()
     ]
     return {"owners": owners, "options": options}
 
@@ -253,9 +264,21 @@ def build_payload(root: str, file_path: str, cfg: dict) -> dict:
 def process_root(root: str, cfg: dict, dry_run: bool, prune: bool) -> tuple[int, int, int]:
     """Generate/update sidecars for one root. Returns (written, changed, pruned)."""
     allowed_exts = set(cfg["options"].get("allowed_extensions") or [])
+    exclude_patterns = cfg["options"].get("exclude_path_patterns") or []
     written = changed = pruned = 0
     for dirpath, _dirnames, filenames in os.walk(root):
-        docs = {f for f in filenames if is_document(f, allowed_exts)}
+        # Skip files under excluded paths (DICOM/medical-imaging exports) even
+        # if their extension is allowed. Matched on the lowercased rel path.
+        rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/").lower()
+
+        def _excluded(name):
+            hay = (rel_dir + "/" + name.lower())
+            return any(p in hay for p in exclude_patterns)
+
+        docs = {
+            f for f in filenames
+            if is_document(f, allowed_exts) and not _excluded(f)
+        }
 
         for name in sorted(docs):
             file_path = os.path.join(dirpath, name)
