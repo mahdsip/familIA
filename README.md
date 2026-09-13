@@ -188,11 +188,35 @@ Retrieval quality is driven by three things, all wired in:
    - `year` — derived from `captured_date`/`modified_date`; a cheap, common
      filter.
 
+   - `place` — optional city/country, emitted only when known. Supplied now via
+     `options.place_map` (a `{ "path substring": "place name" }` map, first
+     case-insensitive match wins) or later by the PhotoPrism importer. This
+     pipeline never reverse-geocodes GPS.
+
    These are groundwork for importing richer catalogues (PhotoPrism photos,
    Plex films/music). The recommended pattern for media is to synthesize a small
    text record per item (title + summary + people/cast + genre) as the indexed
    "document", with structured fields mapped onto a canonical schema so all
    sources share field names (e.g. `people` for photo faces and film cast).
+
+### Complete metadata field reference
+
+| Field | Tier | Source | Notes |
+|---|---|---|---|
+| `topic` | filterable | folder | subject area |
+| `owner` | filterable | folder | person (normalized alias) |
+| `owner_name` | returned | config | full display name |
+| `subpath` | returned | folder | sub-folders below owner |
+| `doc_type` | filterable | extension | pdf, jpg, ... |
+| `file_name` | returned | file | original name |
+| `source_path` | returned | path | for citations |
+| `content_type` | filterable | extension | document/photo/film/music |
+| `media_source` | filterable | config | familia/photoprism/plex |
+| `year` | filterable | date | derived YYYY |
+| `modified_date` | filterable | filesystem | ISO date |
+| `captured_date` | filterable | EXIF | photo-taken date (JPEG) |
+| `file_size_kb` | filterable | filesystem | size |
+| `place` | filterable | config/importer | optional; never from raw GPS |
 
 ## Load your documents
 

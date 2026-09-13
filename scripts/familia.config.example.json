@@ -23,6 +23,10 @@
     "enrich_file_metadata": true,
     "media_source": "familia",
     "default_content_type": "document",
-    "content_type_map": {}
+    "content_type_map": {},
+    "place_map": {
+      "viaje roma 2019": "Roma, Italia",
+      "vacaciones/mallorca": "Mallorca, España"
+    }
   }
 }
