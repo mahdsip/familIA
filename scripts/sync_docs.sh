@@ -18,12 +18,14 @@
 # bucket's own region.
 #
 # What it does, for EACH root, every run:
-#   1. Regenerates the <file>.metadata.json sidecars from the CURRENT folder
-#      structure (recursively, all subfolders). If you reorganised folders, the
-#      metadata updates to match.
-#   2. Uploads documents + their sidecars to S3 (mirror with --delete).
-#   3. Reports whether anything changed. Uploading objects triggers the
-#      auto-sync Lambda, which reindexes the Knowledge Base.
+#   1. Generates the <file>.metadata.json sidecars into a TEMP staging dir
+#      (mirroring the folder tree). Your LOCAL folders are never touched — the
+#      sidecars live only transiently and end up in S3 next to their documents.
+#   2. Syncs documents (source -> S3, --delete, sidecars excluded from this
+#      pass) and then syncs the staged sidecars (staging -> S3, --delete scoped
+#      to *.metadata.json so it only prunes orphan sidecars, never documents).
+#   3. Deletes the staging dir. Uploading objects triggers the auto-sync Lambda,
+#      which reindexes the Knowledge Base.
 #
 # MULTIPLE ROOTS: each root is mirrored into its OWN S3 subprefix, named after
 # the root's folder (its basename), so roots never delete each other's objects
@@ -189,31 +191,47 @@ for ARG in "$@"; do
   echo "Root: ${ROOT}"
   echo "  ->  ${DEST}"
 
-  # 1. Regenerate metadata sidecars for this root (recursive, --prune orphans).
-  echo "==> Updating metadata from folder structure..."
-  META_OUT="$(python3 "${SCRIPT_DIR}/generate_metadata.py" "${ROOT}" "${META_FLAGS[@]}")"
+  # Sidecars are generated into a TEMP staging dir (mirroring the folder tree),
+  # NOT into your source folders — so your local documents stay clean. They
+  # exist only transiently and end up in S3 next to their documents.
+  META_DIR="$(mktemp -d "${TMPDIR:-/tmp}/familia-meta.XXXXXXXX")"
+  trap 'rm -rf "${META_DIR}"' EXIT
+
+  # 1. Generate metadata sidecars into the staging dir (recursive, prune stale).
+  echo "==> Generating metadata (staged, not stored locally)..."
+  META_OUT="$(python3 "${SCRIPT_DIR}/generate_metadata.py" "${ROOT}" --output-dir "${META_DIR}" "${META_FLAGS[@]}")"
   echo "    ${META_OUT}"
 
-  # 2. Mirror documents + sidecars to this root's subprefix. Allowlist: exclude
-  #    everything, then re-include only document types + sidecars. --delete also
-  #    removes any previously-uploaded junk (media/app files) from S3 for this
-  #    subprefix, so re-running cleans up past over-uploads.
-  echo "==> Syncing (documents + sidecars only)..."
-  # Note the ${arr[@]+"${arr[@]}"} idiom: safe expansion of a possibly-empty
-  # array under `set -u` on bash 3.2 (macOS default).
-  # Filter order matters (last match wins): exclude all, re-include doc types,
-  # then re-exclude medical-imaging paths so slice dumps are dropped even though
-  # their extension is allowed.
-  SYNC_OUT="$(aws s3 sync "${ROOT}" "${DEST}" \
+  # 2a. Sync DOCUMENTS from the source folder. --delete mirrors the folder, but
+  #     we EXCLUDE sidecars here so this pass never touches them (they live in
+  #     the staging dir, not the source). Allowlist + medical-imaging excludes
+  #     apply. (${arr[@]+...} idiom = safe empty-array expansion on bash 3.2.)
+  echo "==> Syncing documents..."
+  DOC_SYNC="$(aws s3 sync "${ROOT}" "${DEST}" \
     --delete \
     --exclude "*" \
     "${INCLUDES[@]}" \
+    --exclude "*.metadata.json" \
     ${PATH_EXCLUDES[@]+"${PATH_EXCLUDES[@]}"} \
     ${SYNC_FLAGS[@]+"${SYNC_FLAGS[@]}"} \
     --sse aws:kms)"
 
-  if [ -n "${SYNC_OUT}" ]; then
-    echo "${SYNC_OUT}"
+  # 2b. Sync SIDECARS from the staging dir. --delete removes S3 sidecars whose
+  #     source doc is gone (prune already dropped them from the staging dir).
+  echo "==> Syncing metadata sidecars..."
+  META_SYNC="$(aws s3 sync "${META_DIR}" "${DEST}" \
+    --delete \
+    --exclude "*" \
+    --include "*.metadata.json" \
+    ${SYNC_FLAGS[@]+"${SYNC_FLAGS[@]}"} \
+    --sse aws:kms)"
+
+  rm -rf "${META_DIR}"
+  trap - EXIT
+
+  if [ -n "${DOC_SYNC}" ] || [ -n "${META_SYNC}" ]; then
+    [ -n "${DOC_SYNC}" ] && echo "${DOC_SYNC}"
+    [ -n "${META_SYNC}" ] && echo "${META_SYNC}"
     any_changes=1
   else
     echo "    (nothing to upload; S3 already matches this root)"

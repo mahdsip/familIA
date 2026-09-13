@@ -261,11 +261,25 @@ def build_payload(root: str, file_path: str, cfg: dict) -> dict:
     return {"metadataAttributes": attrs}
 
 
-def process_root(root: str, cfg: dict, dry_run: bool, prune: bool) -> tuple[int, int, int]:
-    """Generate/update sidecars for one root. Returns (written, changed, pruned)."""
+def process_root(root: str, cfg: dict, dry_run: bool, prune: bool,
+                 output_dir: str = "") -> tuple[int, int, int]:
+    """Generate/update sidecars for one root. Returns (written, changed, pruned).
+
+    If output_dir is set, sidecars are written there (mirroring each file's path
+    relative to root) instead of next to the source documents, keeping the
+    source folders clean. Otherwise they are written next to each document.
+    """
     allowed_exts = set(cfg["options"].get("allowed_extensions") or [])
     exclude_patterns = cfg["options"].get("exclude_path_patterns") or []
     written = changed = pruned = 0
+
+    def sidecar_path(file_path):
+        # Where the sidecar for this document goes.
+        if output_dir:
+            rel = os.path.relpath(file_path, root)
+            return os.path.join(output_dir, rel + ".metadata.json")
+        return file_path + ".metadata.json"
+
     for dirpath, _dirnames, filenames in os.walk(root):
         # Skip files under excluded paths (DICOM/medical-imaging exports) even
         # if their extension is allowed. Matched on the lowercased rel path.
@@ -284,7 +298,7 @@ def process_root(root: str, cfg: dict, dry_run: bool, prune: bool) -> tuple[int,
             file_path = os.path.join(dirpath, name)
             payload = build_payload(root, file_path, cfg)
             new_text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
-            sidecar = file_path + ".metadata.json"
+            sidecar = sidecar_path(file_path)
 
             # Detect whether the metadata changed (e.g. folder structure moved).
             old_text = None
@@ -297,13 +311,15 @@ def process_root(root: str, cfg: dict, dry_run: bool, prune: bool) -> tuple[int,
                 if is_change:
                     print(f"[dry-run] {'update' if old_text else 'create'}: {sidecar}")
             elif is_change:
+                os.makedirs(os.path.dirname(sidecar), exist_ok=True)
                 with open(sidecar, "w", encoding="utf-8") as fh:
                     fh.write(new_text)
             written += 1
             if is_change:
                 changed += 1
 
-        if prune:
+        # In-place mode: prune orphan sidecars sitting next to documents.
+        if prune and not output_dir:
             for name in filenames:
                 if name.endswith(".metadata.json"):
                     doc = name[: -len(".metadata.json")]
@@ -314,6 +330,31 @@ def process_root(root: str, cfg: dict, dry_run: bool, prune: bool) -> tuple[int,
                         else:
                             os.remove(orphan)
                         pruned += 1
+
+    # Staging-dir mode: prune sidecars in the output dir whose source document
+    # no longer exists (removed or now filtered out). We recompute which source
+    # docs are eligible and drop any staged sidecar without a match.
+    if prune and output_dir and os.path.isdir(output_dir):
+        eligible = set()
+        for dp, _dn, fns in os.walk(root):
+            rd = os.path.relpath(dp, root).replace(os.sep, "/").lower()
+            for f in fns:
+                hay = rd + "/" + f.lower()
+                if is_document(f, allowed_exts) and not any(p in hay for p in exclude_patterns):
+                    eligible.add(os.path.relpath(os.path.join(dp, f), root))
+        for dp, _dn, fns in os.walk(output_dir):
+            for f in fns:
+                if not f.endswith(".metadata.json"):
+                    continue
+                staged = os.path.join(dp, f)
+                rel_doc = os.path.relpath(staged, output_dir)[: -len(".metadata.json")]
+                if rel_doc not in eligible:
+                    if dry_run:
+                        print(f"[dry-run] prune orphan: {staged}")
+                    else:
+                        os.remove(staged)
+                    pruned += 1
+
     return written, changed, pruned
 
 
@@ -323,6 +364,7 @@ def main() -> int:
     ap.add_argument("--config", help="Path to familia.config.json (default: next to this script)")
     ap.add_argument("--dry-run", action="store_true", help="Print what would change, write nothing")
     ap.add_argument("--prune", action="store_true", help="Delete orphan .metadata.json files")
+    ap.add_argument("--output-dir", help="Write sidecars into this directory (mirroring paths relative to the root) instead of next to the documents. Keeps source folders clean.")
     args = ap.parse_args()
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -335,7 +377,8 @@ def main() -> int:
             print(f"!! Skipping '{raw}': not a directory", file=sys.stderr)
             continue
         print(f"== Root: {root}")
-        w, c, p = process_root(root, cfg, args.dry_run, args.prune)
+        out = os.path.abspath(args.output_dir) if args.output_dir else ""
+        w, c, p = process_root(root, cfg, args.dry_run, args.prune, output_dir=out)
         total_written += w
         total_changed += c
         total_pruned += p

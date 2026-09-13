@@ -232,6 +232,15 @@ Each root is synced recursively (all subfolders). `topic`/`owner` metadata is
 derived from the folders *inside* each root, so the subprefix does not affect
 your `topic/owner` scheme.
 
+**Metadata sidecars are never written to your local folders.** `sync_docs.sh`
+generates the `.metadata.json` files into a temporary staging directory, uploads
+them to S3 next to their documents, then deletes the staging dir — so your
+source folders stay clean. The documents pass and the sidecar pass are synced
+separately; each uses `--delete` scoped by filters so removed documents (and
+their now-orphan sidecars) are pruned from S3 without ever risking the other
+class of object. (`generate_metadata.py --output-dir <dir>` exposes this
+directly if you run it standalone.)
+
 Only document file types are uploaded (an allowlist + the `.metadata.json`
 sidecars). Media (`mp4`, `heic`), medical imaging (`dcm`) and bundled
 application internals (`dll`, `jar`, `exe`, `nib`, ...) are intentionally
