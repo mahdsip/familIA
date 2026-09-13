@@ -188,10 +188,10 @@ Retrieval quality is driven by three things, all wired in:
    - `year` — derived from `captured_date`/`modified_date`; a cheap, common
      filter.
 
-   - `place` — optional city/country, emitted only when known. Supplied now via
-     `options.place_map` (a `{ "path substring": "place name" }` map, first
-     case-insensitive match wins) or later by the PhotoPrism importer. This
-     pipeline never reverse-geocodes GPS.
+   - `place` — optional city/country. Reserved in the schema but NOT set by this
+     pipeline (no manual maintenance). The PhotoPrism importer will populate it
+     per photo from PhotoPrism's already-geocoded place names. This pipeline
+     never reverse-geocodes GPS.
 
    These are groundwork for importing richer catalogues (PhotoPrism photos,
    Plex films/music). The recommended pattern for media is to synthesize a small
@@ -216,7 +216,7 @@ Retrieval quality is driven by three things, all wired in:
 | `modified_date` | filterable | filesystem | ISO date |
 | `captured_date` | filterable | EXIF | photo-taken date (JPEG) |
 | `file_size_kb` | filterable | filesystem | size |
-| `place` | filterable | config/importer | optional; never from raw GPS |
+| `place` | filterable | PhotoPrism importer (future) | optional; never from raw GPS; not set by this pipeline |
 
 ## Load your documents
 

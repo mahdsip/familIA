@@ -23,10 +23,6 @@
     "enrich_file_metadata": true,
     "media_source": "familia",
     "default_content_type": "document",
-    "content_type_map": {},
-    "place_map": {
-      "example-trip-folder": "Example City, Example Country",
-      "another/folder/path": "Another Place"
-    }
+    "content_type_map": {}
   }
 }

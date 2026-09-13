@@ -175,19 +175,6 @@ DEFAULT_CONTENT_TYPES = {
 }
 
 
-def place_for(rel_path: str, options: dict) -> str:
-    """Resolve an optional place name for a file from options.place_map, matching
-    the first (case-insensitive) path substring. Returns "" if none — the field
-    is only emitted when a place is actually known (e.g. later from PhotoPrism).
-    We never reverse-geocode GPS here."""
-    place_map = options.get("place_map") or {}
-    hay = rel_path.replace(os.sep, "/").lower()
-    for needle, place in place_map.items():
-        if str(needle).strip() and str(needle).strip().lower() in hay:
-            return _clean(str(place))
-    return ""
-
-
 def content_type_for(ext: str, options: dict) -> str:
     """Map a file extension to a content_type. Config's content_type_map (if
     present) is merged over the default mapping."""
@@ -241,11 +228,6 @@ DEFAULT_OPTIONS = {
     "media_source": "familia",
     "default_content_type": "document",
     "content_type_map": {},
-    # Optional place (city/country) enrichment. This pipeline does NOT reverse-
-    # geocode GPS — place names come from PhotoPrism later, or from this manual
-    # map now: { "<path substring, case-insensitive>": "<place name>" }. The
-    # first matching substring on a file's relative path wins.
-    "place_map": {},
 }
 
 
@@ -432,11 +414,11 @@ def build_payload(root: str, file_path: str, cfg: dict) -> dict:
     if date_for_year and len(date_for_year) >= 4 and date_for_year[:4].isdigit():
         attrs["year"] = date_for_year[:4]
 
-    # place: optional city/country. Only emitted when known (from place_map now,
-    # or a PhotoPrism importer later). Filterable. Never derived from raw GPS.
-    place = place_for(rel, cfg["options"])
-    if place:
-        attrs["place"] = place
+    # NOTE: `place` (city/country) is part of the canonical schema but is NOT
+    # set by this pipeline — it has no reliable source for it (we never
+    # reverse-geocode GPS). The PhotoPrism importer will populate `place` per
+    # photo from PhotoPrism's already-geocoded place names. S3 Vectors needs no
+    # pre-declaration, so the field simply appears (filterable) once set there.
 
     return {"metadataAttributes": attrs}
 
