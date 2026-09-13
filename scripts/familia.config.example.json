@@ -10,6 +10,11 @@
     "layout": "auto",
     "default_owner": "shared",
     "default_topic": "general",
-    "ignore_folders": ["documents", "docs", "documentos"]
+    "ignore_folders": ["documents", "docs", "documentos"],
+    "allowed_extensions": [
+      "pdf", "txt", "md", "csv", "doc", "docx", "xls", "xlsx",
+      "ppt", "pptx", "html", "htm", "json", "rtf", "odt",
+      "jpg", "jpeg", "png"
+    ]
   }
 }

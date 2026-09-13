@@ -66,12 +66,38 @@ if [ "${DRY_RUN}" != "0" ]; then
   SYNC_FLAGS+=(--dryrun)
 fi
 
-# Only these file types are useful to a text/RAG knowledge base. We upload an
-# ALLOWLIST (exclude everything, then re-include these), which keeps out media
-# (mp4/heic), medical imaging (dcm) and bundled app internals (dll/jar/exe/nib)
-# that Bedrock can't parse and that waste the 1000-file/advanced-parsing budget.
-# Extend DOC_EXTS if you need more document formats.
-DOC_EXTS="pdf txt md csv doc docx xls xlsx ppt pptx html htm json rtf odt"
+# Allowlist of file types to upload. We exclude everything, then re-include
+# these — keeping out media (mp4/heic), medical imaging (dcm) and bundled app
+# internals (dll/jar/exe/nib) that Bedrock can't parse and that waste the
+# 1000-file/advanced-parsing budget.
+#
+# The list is loaded from options.allowed_extensions in familia.config.json so
+# you manage formats in one place. Falls back to this built-in default if the
+# config file or the key is missing. Override ad hoc with the DOC_EXTS env var.
+DEFAULT_DOC_EXTS="pdf txt md csv doc docx xls xlsx ppt pptx html htm json rtf odt jpg jpeg png"
+CONFIG_FILE="${FAMILIA_CONFIG:-${SCRIPT_DIR}/familia.config.json}"
+
+if [ -n "${DOC_EXTS:-}" ]; then
+  : # explicit env override wins, use as-is
+elif [ -f "${CONFIG_FILE}" ]; then
+  DOC_EXTS="$(python3 - "${CONFIG_FILE}" <<'PY'
+import json, sys
+try:
+    cfg = json.load(open(sys.argv[1], encoding="utf-8"))
+    exts = (cfg.get("options", {}) or {}).get("allowed_extensions") or []
+    # normalise: strip leading dots, lowercase, drop blanks
+    exts = [str(e).lstrip(".").strip().lower() for e in exts if str(e).strip()]
+    print(" ".join(dict.fromkeys(exts)))  # de-dupe, preserve order
+except Exception:
+    print("")
+PY
+)"
+  # Fall back to default if the config had no usable list.
+  [ -n "${DOC_EXTS}" ] || DOC_EXTS="${DEFAULT_DOC_EXTS}"
+  echo "==> Allowed extensions from ${CONFIG_FILE}: ${DOC_EXTS}"
+else
+  DOC_EXTS="${DEFAULT_DOC_EXTS}"
+fi
 
 # Build the --include flags: the .metadata.json sidecars plus each doc type
 # (both lower- and upper-case extensions).

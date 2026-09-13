@@ -232,12 +232,26 @@ Each root is synced recursively (all subfolders). `topic`/`owner` metadata is
 derived from the folders *inside* each root, so the subprefix does not affect
 your `topic/owner` scheme.
 
-Only document file types are uploaded (an allowlist: `pdf txt md csv doc docx
-xls xlsx ppt pptx html htm json rtf odt` + the `.metadata.json` sidecars).
-Media (`mp4`, `heic`), medical imaging (`dcm`) and bundled application internals
-(`dll`, `jar`, `exe`, `nib`, ...) are intentionally skipped — Bedrock can't
-extract text from them and they consume the advanced-parsing file budget.
-Extend `DOC_EXTS` in `sync_docs.sh` if you need more formats.
+Only document file types are uploaded (an allowlist + the `.metadata.json`
+sidecars). Media (`mp4`, `heic`), medical imaging (`dcm`) and bundled
+application internals (`dll`, `jar`, `exe`, `nib`, ...) are intentionally
+skipped — Bedrock can't extract text from them and they consume the
+advanced-parsing file budget.
+
+The allowlist is configured in `options.allowed_extensions` in
+`familia.config.json`, so you manage formats alongside the owners map:
+
+```jsonc
+"options": {
+  "allowed_extensions": ["pdf","docx","xlsx","txt","jpg","jpeg","png", ...]
+}
+```
+
+`sync_docs.sh` loads it from there (extensions are lowercased and de-duped; a
+leading dot is optional). If the key is absent it falls back to a built-in
+default; you can also override ad hoc for one run with `DOC_EXTS="pdf docx"
+./scripts/sync_docs.sh ...`. Images (`jpg/png`) are included by default so
+scanned documents are indexed via multimodal parsing.
 
 Uploading objects triggers the auto-sync Lambda, which starts a Knowledge Base
 ingestion job. A weekly schedule (Sun 03:00 Europe/Madrid) is a safety net.
