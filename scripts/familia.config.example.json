@@ -1,5 +1,5 @@
 {
-  "_comment": "TEMPLATE ONLY — all names/paths/places here are generic placeholders. Copy to familia.config.json (gitignored) on the machine that holds your documents and replace them with your real values. Never commit the real file. Matching for owners and place_map is case-insensitive and accent-insensitive.",
+  "_comment": "TEMPLATE ONLY — the names/paths here are generic placeholders. Copy to familia.config.json (gitignored) on the machine that holds your documents and replace them with your real values. Never commit the real file. Owner matching is case-insensitive and accent-insensitive.",
   "owners": {
     "alice": "Alice Example",
     "bob": "Bob Example",
@@ -20,9 +20,6 @@
       "ihe_pdi", "dicom", "osirix", "weasis", "webexport",
       "expimages", "viewer-windows", "viewer-macosx", ".app", "dicomdir"
     ],
-    "enrich_file_metadata": true,
-    "media_source": "familia",
-    "default_content_type": "document",
-    "content_type_map": {}
+    "enrich_file_metadata": true
   }
 }
