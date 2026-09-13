@@ -165,8 +165,20 @@ Retrieval quality is driven by three things, all wired in:
    text is stored non-filterable to stay within the S3 Vectors metadata size
    budget.) These keys are immutable once the index exists, so they're pinned.
 3. **Source always returned.** Every answer includes a `sources` array with the
-   S3 URI plus `topic`/`owner`/`source_path` for each retrieved chunk, so you
-   always know which file the information came from.
+   S3 URI plus `topic`/`owner`/`source_path` (and dates, see below) for each
+   retrieved chunk, so you always know which file the information came from.
+4. **File-property enrichment.** Each sidecar also carries `modified_date`,
+   `file_size_kb`, and — for JPEGs with EXIF — `captured_date` (the real
+   photo-taken date, parsed with no external dependency). These are filterable
+   (so you can query date ranges) and returned with each chunk, giving the model
+   temporal context. Toggle with `options.enrich_file_metadata` (default true).
+
+   Note on "use the most recent X" (e.g. the newest DNI photo): RAG ranks by
+   relevance, not date, and S3 Vectors has no sort-by-metadata. The dates are
+   *returned* so the model can reason over them — phrase the question to lean on
+   that, e.g. "según el DNI más reciente, ¿cuál es el número?", and the model
+   prefers the newest document among those retrieved. For hard guarantees, pass
+   a date `filter`.
 
 ## Load your documents
 

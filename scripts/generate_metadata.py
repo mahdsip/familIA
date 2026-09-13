@@ -67,14 +67,117 @@ orphan sidecars whose document no longer exists.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
+import struct
 import sys
 import unicodedata
 
 SKIP_SUFFIXES = (".metadata.json",)
 SKIP_NAMES = {".DS_Store", "Thumbs.db"}
 MAX_VALUE_LEN = 512
+
+_JPEG_EXTS = {"jpg", "jpeg"}
+
+
+def _exif_datetime_original(path: str) -> str:
+    """Extract EXIF DateTimeOriginal from a JPEG as an ISO date (YYYY-MM-DD).
+
+    Pure-Python, no dependencies: scans APP1/Exif, reads the TIFF IFD0 + Exif
+    sub-IFD for tag 0x9003 (DateTimeOriginal) or 0x0132 (DateTime). Returns ""
+    on any parsing issue — enrichment is best-effort and never fatal.
+    """
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read(131072)  # EXIF lives near the top; 128KB is ample
+        if data[0:2] != b"\xff\xd8":  # not a JPEG
+            return ""
+        # Find APP1 (Exif) segment.
+        i = 2
+        exif = None
+        while i + 4 < len(data):
+            if data[i] != 0xFF:
+                break
+            marker = data[i + 1]
+            seg_len = struct.unpack(">H", data[i + 2:i + 4])[0]
+            seg = data[i + 4:i + 2 + seg_len]
+            if marker == 0xE1 and seg[:6] == b"Exif\x00\x00":
+                exif = seg[6:]
+                break
+            if marker == 0xDA:  # start of scan — no more headers
+                break
+            i += 2 + seg_len
+        if not exif:
+            return ""
+
+        # TIFF header: byte order + IFD0 offset.
+        bo = "<" if exif[:2] == b"II" else ">"
+        ifd0 = struct.unpack(bo + "I", exif[4:8])[0]
+
+        def read_ifd(offset):
+            entries = {}
+            if offset + 2 > len(exif):
+                return entries, 0
+            count = struct.unpack(bo + "H", exif[offset:offset + 2])[0]
+            p = offset + 2
+            for _ in range(count):
+                if p + 12 > len(exif):
+                    break
+                tag, typ, cnt = struct.unpack(bo + "HHI", exif[p:p + 8])
+                val = exif[p + 8:p + 12]
+                entries[tag] = (typ, cnt, val)
+                p += 12
+            next_ifd = struct.unpack(bo + "I", exif[p:p + 4])[0] if p + 4 <= len(exif) else 0
+            return entries, next_ifd
+
+        def ascii_at(entry):
+            typ, cnt, val = entry
+            if typ != 2:  # ASCII
+                return ""
+            if cnt <= 4:
+                raw = val[:cnt]
+            else:
+                off = struct.unpack(bo + "I", val)[0]
+                raw = exif[off:off + cnt]
+            return raw.split(b"\x00", 1)[0].decode("ascii", "ignore")
+
+        e0, _ = read_ifd(ifd0)
+        # Exif sub-IFD pointer (tag 0x8769) → where DateTimeOriginal lives.
+        dt = ""
+        if 0x8769 in e0:
+            sub_off = struct.unpack(bo + "I", e0[0x8769][2])[0]
+            esub, _ = read_ifd(sub_off)
+            if 0x9003 in esub:
+                dt = ascii_at(esub[0x9003])
+        if not dt and 0x0132 in e0:  # fall back to file DateTime
+            dt = ascii_at(e0[0x0132])
+        if not dt:
+            return ""
+        # EXIF format: "YYYY:MM:DD HH:MM:SS" → ISO date.
+        date_part = dt.strip().split(" ")[0].replace(":", "-")
+        # sanity check
+        datetime.date.fromisoformat(date_part)
+        return date_part
+    except Exception:
+        return ""
+
+
+def file_enrichment(path: str, ext: str) -> dict:
+    """Best-effort file properties for the metadata: modified date, size, and
+    (for JPEGs) the EXIF capture date. Any failure is silently skipped."""
+    out = {}
+    try:
+        st = os.stat(path)
+        out["modified_date"] = datetime.date.fromtimestamp(st.st_mtime).isoformat()
+        out["file_size_kb"] = int(round(st.st_size / 1024))
+    except Exception:
+        pass
+    if ext in _JPEG_EXTS:
+        captured = _exif_datetime_original(path)
+        if captured:
+            out["captured_date"] = captured
+    return out
 
 DEFAULT_OPTIONS = {
     "layout": "auto",
@@ -91,6 +194,9 @@ DEFAULT_OPTIONS = {
     # extension is allowed — e.g. DICOM/medical-imaging slice-export folders.
     # Kept in sync with sync_docs.sh's exclude_path_patterns.
     "exclude_path_patterns": [],
+    # Add file-property metadata (modified_date, file_size_kb, and EXIF
+    # captured_date for JPEGs) to each sidecar. Set false to disable.
+    "enrich_file_metadata": True,
 }
 
 
@@ -258,6 +364,13 @@ def build_payload(root: str, file_path: str, cfg: dict) -> dict:
         attrs["owner_name"] = _clean(display)
     if subpath:
         attrs["subpath"] = subpath
+
+    # File-property enrichment (dates/size) unless disabled in config. These
+    # give the model temporal context (e.g. to prefer the most recent DNI) and
+    # enable date-range filtering. Kept filterable (small values).
+    if cfg["options"].get("enrich_file_metadata", True):
+        attrs.update(file_enrichment(file_path, ext))
+
     return {"metadataAttributes": attrs}
 
 

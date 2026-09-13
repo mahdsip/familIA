@@ -160,6 +160,9 @@ def handler(event, context):
                     "topic": md.get("topic"),
                     "owner": md.get("owner"),
                     "source_path": md.get("source_path"),
+                    # Dates help disambiguate duplicates (e.g. newest DNI).
+                    "captured_date": md.get("captured_date"),
+                    "modified_date": md.get("modified_date"),
                 }
             )
 
