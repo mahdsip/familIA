@@ -183,8 +183,11 @@ Retrieval quality is driven by three things, all wired in:
    - `content_type` — `document` / `photo` / `film` / `music`, auto-derived from
      the extension (override via `options.content_type_map`). Lets you scope
      retrieval to one media kind.
-   - `media_source` — provenance (`familia` by default; e.g. `photoprism`,
-     `plex` for future importers).
+   - `provider` — where this record's metadata came from, looked up per
+     content category from `options.providers` (e.g. `documents:
+     personal_backup`, `images: photoprism`, `movies`/`music`: `plex`). As one
+     config drives documents, photos, films and music, this records the source
+     of each category. Only emitted when the category is configured.
    - `year` — derived from `captured_date`/`modified_date`; a cheap, common
      filter.
 
@@ -211,7 +214,7 @@ Retrieval quality is driven by three things, all wired in:
 | `file_name` | returned | file | original name |
 | `source_path` | returned | path | for citations |
 | `content_type` | filterable | extension | document/photo/film/music |
-| `media_source` | filterable | config | familia/photoprism/plex |
+| `provider` | filterable | config (`providers` per category) | e.g. personal_backup / photoprism / plex |
 | `year` | filterable | date | derived YYYY |
 | `modified_date` | filterable | filesystem | ISO date |
 | `captured_date` | filterable | EXIF | photo-taken date (JPEG) |

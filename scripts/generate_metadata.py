@@ -222,12 +222,26 @@ DEFAULT_OPTIONS = {
     # captured_date for JPEGs) to each sidecar. Set false to disable.
     "enrich_file_metadata": True,
     # Discriminator fields (small, filterable, future-proof for mixed media):
-    #   media_source  — provenance tag: familia | photoprism | plex | ...
     #   default_content_type — used when the extension matches no media type
     #   content_type_map — override/extend the extension->content_type mapping
-    "media_source": "familia",
     "default_content_type": "document",
     "content_type_map": {},
+    # Provider per content category. As one config file grows to drive
+    # documents, photos, movies and music, this records where each category's
+    # metadata comes from. The record's `provider` field is set by looking up
+    # its content_type here (document->documents, photo->images, film->movies,
+    # music->music). Unmapped categories emit no provider.
+    "providers": {
+        "documents": "personal_backup",
+    },
+}
+
+# content_type value -> providers config key.
+_PROVIDER_KEY_FOR_CONTENT_TYPE = {
+    "document": "documents",
+    "photo": "images",
+    "film": "movies",
+    "music": "music",
 }
 
 
@@ -405,9 +419,15 @@ def build_payload(root: str, file_path: str, cfg: dict) -> dict:
     # ---- Discriminator fields (small, filterable, future-proof) -------------
     # content_type: master discriminator once media is mixed in. Auto-derived
     # from the extension, over/extended via options.content_type_map.
-    attrs["content_type"] = content_type_for(ext, cfg["options"])
-    # media_source: where this record came from (familia | photoprism | plex).
-    attrs["media_source"] = cfg["options"].get("media_source", "familia")
+    ctype = content_type_for(ext, cfg["options"])
+    attrs["content_type"] = ctype
+    # provider: where this category's metadata comes from, looked up per
+    # content_type from options.providers (e.g. documents -> personal_backup,
+    # images -> photoprism, movies/music -> plex). Only set when configured.
+    prov_key = _PROVIDER_KEY_FOR_CONTENT_TYPE.get(ctype)
+    provider = (cfg["options"].get("providers") or {}).get(prov_key) if prov_key else None
+    if provider:
+        attrs["provider"] = _clean(str(provider))
     # year: derived from the best available date (captured > modified). Cheap,
     # high-value filter ("cosas de 2019"). Only set when a date is known.
     date_for_year = attrs.get("captured_date") or attrs.get("modified_date")
