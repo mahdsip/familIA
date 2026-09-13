@@ -179,6 +179,20 @@ Retrieval quality is driven by three things, all wired in:
    that, e.g. "según el DNI más reciente, ¿cuál es el número?", and the model
    prefers the newest document among those retrieved. For hard guarantees, pass
    a date `filter`.
+5. **Discriminator fields** (filterable, future-proofing a mixed-media index):
+   - `content_type` — `document` / `photo` / `film` / `music`, auto-derived from
+     the extension (override via `options.content_type_map`). Lets you scope
+     retrieval to one media kind.
+   - `media_source` — provenance (`familia` by default; e.g. `photoprism`,
+     `plex` for future importers).
+   - `year` — derived from `captured_date`/`modified_date`; a cheap, common
+     filter.
+
+   These are groundwork for importing richer catalogues (PhotoPrism photos,
+   Plex films/music). The recommended pattern for media is to synthesize a small
+   text record per item (title + summary + people/cast + genre) as the indexed
+   "document", with structured fields mapped onto a canonical schema so all
+   sources share field names (e.g. `people` for photo faces and film cast).
 
 ## Load your documents
 

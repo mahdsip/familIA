@@ -20,6 +20,9 @@
       "ihe_pdi", "dicom", "osirix", "weasis", "webexport",
       "expimages", "viewer-windows", "viewer-macosx", ".app", "dicomdir"
     ],
-    "enrich_file_metadata": true
+    "enrich_file_metadata": true,
+    "media_source": "familia",
+    "default_content_type": "document",
+    "content_type_map": {}
   }
 }

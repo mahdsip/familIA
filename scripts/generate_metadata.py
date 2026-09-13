@@ -163,6 +163,30 @@ def _exif_datetime_original(path: str) -> str:
         return ""
 
 
+# Default extension -> content_type mapping. Documents are the common case;
+# media types are here so mixed content (photos/films/music) auto-classifies
+# once you start importing PhotoPrism/Plex records. Override/extend via
+# options.content_type_map in familia.config.json.
+DEFAULT_CONTENT_TYPES = {
+    "photo": ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "webp", "heic"],
+    "film": ["mp4", "mkv", "avi", "mov", "wmv", "m4v"],
+    "music": ["mp3", "flac", "wav", "m4a", "aac", "ogg"],
+    # everything else falls back to "document"
+}
+
+
+def content_type_for(ext: str, options: dict) -> str:
+    """Map a file extension to a content_type. Config's content_type_map (if
+    present) is merged over the default mapping."""
+    mapping = dict(DEFAULT_CONTENT_TYPES)
+    for ctype, exts in (options.get("content_type_map") or {}).items():
+        mapping[str(ctype)] = [str(e).lstrip(".").strip().lower() for e in exts]
+    for ctype, exts in mapping.items():
+        if ext in exts:
+            return ctype
+    return options.get("default_content_type", "document")
+
+
 def file_enrichment(path: str, ext: str) -> dict:
     """Best-effort file properties for the metadata: modified date, size, and
     (for JPEGs) the EXIF capture date. Any failure is silently skipped."""
@@ -197,6 +221,13 @@ DEFAULT_OPTIONS = {
     # Add file-property metadata (modified_date, file_size_kb, and EXIF
     # captured_date for JPEGs) to each sidecar. Set false to disable.
     "enrich_file_metadata": True,
+    # Discriminator fields (small, filterable, future-proof for mixed media):
+    #   media_source  — provenance tag: familia | photoprism | plex | ...
+    #   default_content_type — used when the extension matches no media type
+    #   content_type_map — override/extend the extension->content_type mapping
+    "media_source": "familia",
+    "default_content_type": "document",
+    "content_type_map": {},
 }
 
 
@@ -370,6 +401,18 @@ def build_payload(root: str, file_path: str, cfg: dict) -> dict:
     # enable date-range filtering. Kept filterable (small values).
     if cfg["options"].get("enrich_file_metadata", True):
         attrs.update(file_enrichment(file_path, ext))
+
+    # ---- Discriminator fields (small, filterable, future-proof) -------------
+    # content_type: master discriminator once media is mixed in. Auto-derived
+    # from the extension, over/extended via options.content_type_map.
+    attrs["content_type"] = content_type_for(ext, cfg["options"])
+    # media_source: where this record came from (familia | photoprism | plex).
+    attrs["media_source"] = cfg["options"].get("media_source", "familia")
+    # year: derived from the best available date (captured > modified). Cheap,
+    # high-value filter ("cosas de 2019"). Only set when a date is known.
+    date_for_year = attrs.get("captured_date") or attrs.get("modified_date")
+    if date_for_year and len(date_for_year) >= 4 and date_for_year[:4].isdigit():
+        attrs["year"] = date_for_year[:4]
 
     return {"metadataAttributes": attrs}
 
