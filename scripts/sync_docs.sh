@@ -153,6 +153,25 @@ ${EXCLUDE_PATTERNS_RAW}
 EOF
 [ ${#PATH_EXCLUDES[@]} -gt 0 ] && echo "==> Excluding medical-imaging paths matching: $(printf '%s ' ${EXCLUDE_PATTERNS_RAW})"
 
+# Max file size (MB) — files above this are skipped (Bedrock rejects >50MB).
+# From options.max_file_size_mb in the config; default 50; 0 disables.
+if [ -z "${MAX_FILE_MB:-}" ]; then
+  if [ -f "${CONFIG_FILE}" ]; then
+    MAX_FILE_MB="$(python3 - "${CONFIG_FILE}" <<'PY'
+import json, sys
+try:
+    cfg = json.load(open(sys.argv[1], encoding="utf-8"))
+    v = (cfg.get("options", {}) or {}).get("max_file_size_mb", 50)
+    print(int(v))
+except Exception:
+    print(50)
+PY
+)"
+  else
+    MAX_FILE_MB=50
+  fi
+fi
+
 # Fail fast if no usable AWS credentials resolve from the standard chain
 # (exported env vars, AWS_PROFILE, SSO, instance role, ...). This avoids
 # failing halfway through an upload.
@@ -202,6 +221,20 @@ for ARG in "$@"; do
   META_OUT="$(python3 "${SCRIPT_DIR}/generate_metadata.py" "${ROOT}" --output-dir "${META_DIR}" "${META_FLAGS[@]}")"
   echo "    ${META_OUT}"
 
+  # Build --exclude entries for files over the size limit (aws s3 sync has no
+  # size filter). Bedrock rejects >50MB, so skipping them at source avoids a
+  # guaranteed ingestion failure. MAX_FILE_MB from config (default 50; 0=off).
+  SIZE_EXCLUDES=()
+  if [ "${MAX_FILE_MB:-50}" -gt 0 ] 2>/dev/null; then
+    MAX_BYTES=$(( MAX_FILE_MB * 1024 * 1024 ))
+    while IFS= read -r big; do
+      [ -n "${big}" ] || continue
+      rel="${big#${ROOT}/}"
+      SIZE_EXCLUDES+=(--exclude "${rel}")
+    done < <(find "${ROOT}" -type f -size +"${MAX_BYTES}"c 2>/dev/null)
+    [ ${#SIZE_EXCLUDES[@]} -gt 0 ] && echo "    Skipping $(( ${#SIZE_EXCLUDES[@]} )) file(s) larger than ${MAX_FILE_MB}MB."
+  fi
+
   # 2a. Sync DOCUMENTS from the source folder. --delete mirrors the folder, but
   #     we EXCLUDE sidecars here so this pass never touches them (they live in
   #     the staging dir, not the source). Allowlist + medical-imaging excludes
@@ -213,6 +246,7 @@ for ARG in "$@"; do
     "${INCLUDES[@]}" \
     --exclude "*.metadata.json" \
     ${PATH_EXCLUDES[@]+"${PATH_EXCLUDES[@]}"} \
+    ${SIZE_EXCLUDES[@]+"${SIZE_EXCLUDES[@]}"} \
     ${SYNC_FLAGS[@]+"${SYNC_FLAGS[@]}"} \
     --sse aws:kms)"
 

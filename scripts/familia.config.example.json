@@ -20,6 +20,7 @@
       "ihe_pdi", "dicom", "osirix", "weasis", "webexport",
       "expimages", "viewer-windows", "viewer-macosx", ".app", "dicomdir"
     ],
+    "max_file_size_mb": 50,
     "providers": {
       "documents": "personal_backup",
       "images": "photoprism",

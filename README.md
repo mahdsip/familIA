@@ -300,6 +300,10 @@ application internals (`dll`, `jar`, `exe`, `nib`, ...) are intentionally
 skipped — Bedrock can't extract text from them and they consume the
 advanced-parsing file budget.
 
+Files larger than `options.max_file_size_mb` (default 50, matching Bedrock's
+hard limit; `0` disables) are skipped at source — no sidecar, not uploaded — so
+they don't cause guaranteed ingestion failures.
+
 The allowlist is configured in `options.allowed_extensions` in
 `familia.config.json`, so you manage formats alongside the owners map:
 

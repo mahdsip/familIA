@@ -218,6 +218,9 @@ DEFAULT_OPTIONS = {
     # extension is allowed — e.g. DICOM/medical-imaging slice-export folders.
     # Kept in sync with sync_docs.sh's exclude_path_patterns.
     "exclude_path_patterns": [],
+    # Skip files larger than this (MB). Bedrock rejects files over 50MB, so we
+    # skip them at source (no sidecar, not uploaded). 0 disables the limit.
+    "max_file_size_mb": 50,
     # Discriminator fields (small, filterable, future-proof for mixed media):
     #   default_content_type — used when the extension matches no media type
     #   content_type_map — override/extend the extension->content_type mapping
@@ -449,7 +452,16 @@ def process_root(root: str, cfg: dict, dry_run: bool, prune: bool,
     """
     allowed_exts = set(cfg["options"].get("allowed_extensions") or [])
     exclude_patterns = cfg["options"].get("exclude_path_patterns") or []
+    max_bytes = int(cfg["options"].get("max_file_size_mb", 50) or 0) * 1024 * 1024
     written = changed = pruned = 0
+
+    def _too_big(fp):
+        if max_bytes <= 0:
+            return False
+        try:
+            return os.path.getsize(fp) > max_bytes
+        except OSError:
+            return False
 
     def sidecar_path(file_path):
         # Where the sidecar for this document goes.
@@ -470,6 +482,7 @@ def process_root(root: str, cfg: dict, dry_run: bool, prune: bool,
         docs = {
             f for f in filenames
             if is_document(f, allowed_exts) and not _excluded(f)
+            and not _too_big(os.path.join(dirpath, f))
         }
 
         for name in sorted(docs):
