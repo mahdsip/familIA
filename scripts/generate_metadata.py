@@ -43,9 +43,15 @@ Config (familia.config.json, next to this script or via --config):
         "layout": "auto" | "topic_owner" | "owner_topic",
         "default_owner": "shared",
         "default_topic": "general",
-        "ignore_folders": ["documents", "docs", "documentos"]
+        "ignore_folders": ["documents", "docs", "documentos"],
+        "allowed_extensions": ["pdf", "docx", "jpg", ...]
       }
     }
+
+Sidecars are only generated for files whose extension is in allowed_extensions
+(kept in sync with sync_docs.sh so metadata is not created for files that won't
+be uploaded). An empty/absent list means all files are processed. With --prune,
+sidecars for now-disallowed files are removed.
 
 Usage:
     python3 generate_metadata.py <root> [<root> ...] [--config PATH]
@@ -77,6 +83,10 @@ DEFAULT_OPTIONS = {
     # Wrapper/prefix folders that are NOT real topics (e.g. the S3 sync prefix).
     # When choosing the topic next to the owner, these are skipped.
     "ignore_folders": ["documents", "docs", "documentos"],
+    # File extensions to generate sidecars for. Kept in sync with the upload
+    # allowlist so we don't create metadata for files that won't be uploaded.
+    # Empty list => generate for ALL files (no extension filtering).
+    "allowed_extensions": [],
 }
 
 
@@ -111,6 +121,12 @@ def load_config(explicit_path: str | None, script_dir: str) -> dict:
     if options["layout"] not in ("auto", "topic_owner", "owner_topic"):
         print(f"Invalid options.layout: {options['layout']}", file=sys.stderr)
         raise SystemExit(2)
+    # Normalise allowed_extensions: lowercase, strip leading dot, drop blanks.
+    options["allowed_extensions"] = [
+        str(e).lstrip(".").strip().lower()
+        for e in (options.get("allowed_extensions") or [])
+        if str(e).strip()
+    ]
     return {"owners": owners, "options": options}
 
 
@@ -194,10 +210,18 @@ def classify(folders: list[str], owners: dict, options: dict,
     return _clean(topic), _clean(owner_alias), _clean(subpath)
 
 
-def is_document(name: str) -> bool:
+def is_document(name: str, allowed_exts: set = None) -> bool:
     if name in SKIP_NAMES or name.startswith("."):
         return False
-    return not name.endswith(SKIP_SUFFIXES)
+    if name.endswith(SKIP_SUFFIXES):
+        return False
+    # If an allowlist is configured, only treat matching extensions as
+    # documents (so we don't generate sidecars for files that won't be
+    # uploaded). Empty/None allowlist => accept everything.
+    if allowed_exts:
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        return ext in allowed_exts
+    return True
 
 
 def build_payload(root: str, file_path: str, cfg: dict) -> dict:
@@ -228,9 +252,10 @@ def build_payload(root: str, file_path: str, cfg: dict) -> dict:
 
 def process_root(root: str, cfg: dict, dry_run: bool, prune: bool) -> tuple[int, int, int]:
     """Generate/update sidecars for one root. Returns (written, changed, pruned)."""
+    allowed_exts = set(cfg["options"].get("allowed_extensions") or [])
     written = changed = pruned = 0
     for dirpath, _dirnames, filenames in os.walk(root):
-        docs = {f for f in filenames if is_document(f)}
+        docs = {f for f in filenames if is_document(f, allowed_exts)}
 
         for name in sorted(docs):
             file_path = os.path.join(dirpath, name)
