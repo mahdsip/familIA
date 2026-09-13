@@ -1,5 +1,5 @@
 {
-  "_comment": "Copy to familia.config.json (gitignored) on the machine that holds your documents. Map each folder alias (as it appears in your directory names) to a display name. Folder matching is case-insensitive and accent-insensitive. NEVER commit the real file to a public repo.",
+  "_comment": "TEMPLATE ONLY — all names/paths/places here are generic placeholders. Copy to familia.config.json (gitignored) on the machine that holds your documents and replace them with your real values. Never commit the real file. Matching for owners and place_map is case-insensitive and accent-insensitive.",
   "owners": {
     "alice": "Alice Example",
     "bob": "Bob Example",
@@ -25,8 +25,8 @@
     "default_content_type": "document",
     "content_type_map": {},
     "place_map": {
-      "viaje roma 2019": "Roma, Italia",
-      "vacaciones/mallorca": "Mallorca, España"
+      "example-trip-folder": "Example City, Example Country",
+      "another/folder/path": "Another Place"
     }
   }
 }
