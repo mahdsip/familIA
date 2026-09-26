@@ -13,7 +13,8 @@
     "ignore_folders": ["documents", "docs", "documentos"],
     "allowed_extensions": [
       "pdf", "txt", "md", "csv", "doc", "docx", "xls", "xlsx",
-      "ppt", "pptx", "html", "htm", "json", "rtf", "odt"
+      "ppt", "pptx", "html", "htm", "json", "rtf", "odt",
+      "jpg", "jpeg", "png"
     ],
     "exclude_path_patterns": [
       "ihe_pdi", "dicom", "osirix", "weasis", "webexport",
