@@ -109,6 +109,42 @@ for e in ${DOC_EXTS}; do
   INCLUDES+=(--include "*.${e}" --include "*.${E_UPPER}")
 done
 
+# Extensions to PRESERVE in S3 but no longer process: excluded from the sync so
+# they are neither uploaded NOR deleted (aws s3 sync ignores all actions for an
+# excluded pattern). Use this when a category moves to another provider (e.g.
+# images now come from PhotoPrism): drop them from allowed_extensions AND list
+# them here so the existing image vectors in the index are kept intact.
+# From options.preserve_extensions; default = image types.
+DEFAULT_PRESERVE_EXTS="jpg jpeg png gif bmp tiff webp heic"
+if [ -f "${CONFIG_FILE}" ]; then
+  CFG_PRESERVE="$(python3 - "${CONFIG_FILE}" <<'PY'
+import json, sys
+try:
+    cfg = json.load(open(sys.argv[1], encoding="utf-8"))
+    v = (cfg.get("options", {}) or {}).get("preserve_extensions")
+    if v is None:
+        print("__UNSET__")
+    else:
+        print(" ".join(str(e).lstrip(".").strip().lower() for e in v if str(e).strip()))
+except Exception:
+    print("__UNSET__")
+PY
+)"
+else
+  CFG_PRESERVE="__UNSET__"
+fi
+if [ "${CFG_PRESERVE}" = "__UNSET__" ]; then
+  PRESERVE_EXTS="${DEFAULT_PRESERVE_EXTS}"
+else
+  PRESERVE_EXTS="${CFG_PRESERVE}"   # may be empty = preserve nothing
+fi
+PRESERVE_EXCLUDES=()
+for e in ${PRESERVE_EXTS}; do
+  E_UP="$(printf '%s' "$e" | tr '[:lower:]' '[:upper:]')"
+  PRESERVE_EXCLUDES+=(--exclude "*.${e}" --exclude "*.${E_UP}")
+done
+[ ${#PRESERVE_EXCLUDES[@]} -gt 0 ] && echo "==> Preserving (not uploaded, not deleted) existing: ${PRESERVE_EXTS}"
+
 # Path substrings whose folders hold DICOM/medical-imaging exports (hundreds of
 # raw slice images that aren't documents). These are EXCLUDED even if their
 # extension is allowed — the real report PDFs sit alongside and are still kept.
@@ -245,6 +281,7 @@ for ARG in "$@"; do
     --exclude "*" \
     "${INCLUDES[@]}" \
     --exclude "*.metadata.json" \
+    ${PRESERVE_EXCLUDES[@]+"${PRESERVE_EXCLUDES[@]}"} \
     ${PATH_EXCLUDES[@]+"${PATH_EXCLUDES[@]}"} \
     ${SIZE_EXCLUDES[@]+"${SIZE_EXCLUDES[@]}"} \
     ${SYNC_FLAGS[@]+"${SYNC_FLAGS[@]}"} \
@@ -252,11 +289,19 @@ for ARG in "$@"; do
 
   # 2b. Sync SIDECARS from the staging dir. --delete removes S3 sidecars whose
   #     source doc is gone (prune already dropped them from the staging dir).
+  # Preserve the sidecars of preserved files too (e.g. foto.jpg.metadata.json):
+  # exclude them so --delete here doesn't remove the existing image sidecars.
+  PRESERVE_SIDECAR_EXCLUDES=()
+  for e in ${PRESERVE_EXTS}; do
+    E_UP="$(printf '%s' "$e" | tr '[:lower:]' '[:upper:]')"
+    PRESERVE_SIDECAR_EXCLUDES+=(--exclude "*.${e}.metadata.json" --exclude "*.${E_UP}.metadata.json")
+  done
   echo "==> Syncing metadata sidecars..."
   META_SYNC="$(aws s3 sync "${META_DIR}" "${DEST}" \
     --delete \
     --exclude "*" \
     --include "*.metadata.json" \
+    ${PRESERVE_SIDECAR_EXCLUDES[@]+"${PRESERVE_SIDECAR_EXCLUDES[@]}"} \
     ${SYNC_FLAGS[@]+"${SYNC_FLAGS[@]}"} \
     --sse aws:kms)"
 

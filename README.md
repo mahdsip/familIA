@@ -323,6 +323,12 @@ metadata is owned by PhotoPrism, which feeds it directly to the knowledge base,
 so `jpg`/`jpeg`/`png` are not in `allowed_extensions`. Add them back only if you
 want this pipeline to index scans directly (via multimodal parsing).
 
+`options.preserve_extensions` lists file types the sync **keeps in S3 but no
+longer processes**: they are neither uploaded nor deleted (excluded from the
+sync entirely). This is what lets you stop processing images here *without*
+removing image vectors already in the index — the existing image objects and
+their sidecars in S3 are left untouched. Default: the image types.
+
 Uploading objects triggers the auto-sync Lambda, which starts a Knowledge Base
 ingestion job. A weekly schedule (Sun 03:00 Europe/Madrid) is a safety net.
 
