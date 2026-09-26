@@ -309,15 +309,19 @@ The allowlist is configured in `options.allowed_extensions` in
 
 ```jsonc
 "options": {
-  "allowed_extensions": ["pdf","docx","xlsx","txt","jpg","jpeg","png", ...]
+  "allowed_extensions": ["pdf","docx","xlsx","txt","odt", ...]
 }
 ```
 
 `sync_docs.sh` loads it from there (extensions are lowercased and de-duped; a
 leading dot is optional). If the key is absent it falls back to a built-in
 default; you can also override ad hoc for one run with `DOC_EXTS="pdf docx"
-./scripts/sync_docs.sh ...`. Images (`jpg/png`) are included by default so
-scanned documents are indexed via multimodal parsing.
+./scripts/sync_docs.sh ...`.
+
+**Images are intentionally excluded from the document pipeline.** All image
+metadata is owned by PhotoPrism, which feeds it directly to the knowledge base,
+so `jpg`/`jpeg`/`png` are not in `allowed_extensions`. Add them back only if you
+want this pipeline to index scans directly (via multimodal parsing).
 
 Uploading objects triggers the auto-sync Lambda, which starts a Knowledge Base
 ingestion job. A weekly schedule (Sun 03:00 Europe/Madrid) is a safety net.
@@ -339,11 +343,13 @@ inspect `failureReasons` on a job if the number looks wrong.
 
 ### Multimodal parsing (scanned images)
 
-`parsing_modality = "MULTIMODAL"` (default) lets the parser read text from
-scanned images (JPG/PNG) — photographed IDs, certificates, medical reports —
-not just text documents. This requires a **supplemental data storage bucket**
-(`<project>-supplemental-<account>`, created automatically) where Bedrock stores
-extracted image artifacts. HEIC and DICOM are not supported by Bedrock parsing.
+The Terraform still enables `parsing_modality = "MULTIMODAL"` and provisions a
+**supplemental data storage bucket** (`<project>-supplemental-<account>`), which
+would let the parser read text from scanned images (JPG/PNG). This is currently
+**unused** because images are excluded from the document pipeline (PhotoPrism
+owns images). It's kept ready so you can re-enable image scanning here simply by
+adding `jpg`/`jpeg`/`png` back to `allowed_extensions`. HEIC and DICOM are not
+supported by Bedrock parsing.
 
 ### Source citations
 
