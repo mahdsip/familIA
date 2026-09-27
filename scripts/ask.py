@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Minimal SigV4 client for the familIA query API — reference for the Raspberry Pi.
+"""Minimal SigV4 client for the familIA orchestrator API — for the Raspberry Pi.
 
-Signs the POST /query request with IAM credentials (SigV4) using botocore, so
-no API keys or shared secrets are involved. The OpenVoice server on the Pi can
+Signs the POST /ask request with IAM credentials (SigV4) using botocore, so no
+API keys or shared secrets are involved. The OpenVoice server on the Pi can
 import `ask()` directly, or you can run this from the CLI.
+
+The /ask endpoint is the ORCHESTRATOR: it classifies the question, decides
+whether it is personal/family-related, auto-detects the person/topic, and
+queries the private RAG first for personal questions (answering from general
+knowledge only for non-personal questions). You do NOT need to pass owner/topic
+— they are detected automatically. They remain here as optional overrides.
 
 Dependencies (install on the Pi):
     pip install botocore requests
@@ -12,9 +18,9 @@ Credentials come from the standard AWS credential chain (env vars, ~/.aws, or
 the pi-credentials.env produced by create_pi_credentials.sh).
 
 Usage:
-    export FAMILIA_API_URL="https://xxxx.execute-api.eu-central-1.amazonaws.com/prod/query"
+    export FAMILIA_API_URL="https://xxxx.execute-api.eu-central-1.amazonaws.com/prod/ask"
     export AWS_REGION="eu-central-1"
-    python3 ask.py "When is Dad's birthday?"
+    python3 ask.py "¿Cuándo es el cumpleaños de papá?"
 """
 import json
 import os
@@ -29,15 +35,12 @@ SERVICE = "execute-api"
 
 
 def ask(question: str, api_url: str | None = None, region: str | None = None,
-        session_id: str | None = None, owner: str | None = None,
-        topic: str | None = None) -> dict:
+        owner: str | None = None, topic: str | None = None) -> dict:
     api_url = api_url or os.environ["FAMILIA_API_URL"]
     region = region or os.environ.get("AWS_REGION", "eu-central-1")
 
     body = {"question": question}
-    if session_id:
-        body["sessionId"] = session_id
-    # Optional metadata filters — sharpen retrieval by person/subject.
+    # Optional overrides — the orchestrator auto-detects these, so normally omit.
     if owner:
         body["owner"] = owner
     if topic:
@@ -60,7 +63,7 @@ def ask(question: str, api_url: str | None = None, region: str | None = None,
         api_url,
         data=payload,
         headers=dict(aws_request.headers),
-        timeout=40,
+        timeout=60,
     )
     response.raise_for_status()
     return response.json()
@@ -69,20 +72,22 @@ def ask(question: str, api_url: str | None = None, region: str | None = None,
 def main() -> int:
     import argparse
 
-    ap = argparse.ArgumentParser(description="Ask familIA a question (SigV4-signed).")
+    ap = argparse.ArgumentParser(description="Ask familIA a question (SigV4-signed, via /ask orchestrator).")
     ap.add_argument("question", nargs="+", help="The question to ask")
-    ap.add_argument("--owner", help="Filter retrieval to a document owner (folder)")
-    ap.add_argument("--topic", help="Filter retrieval to a topic (folder)")
-    ap.add_argument("--session-id", help="Continue a previous conversation")
+    ap.add_argument("--owner", help="Override: force a document owner (folder key)")
+    ap.add_argument("--topic", help="Override: force a topic (folder key)")
     args = ap.parse_args()
 
-    result = ask(
-        " ".join(args.question),
-        session_id=args.session_id,
-        owner=args.owner,
-        topic=args.topic,
-    )
+    result = ask(" ".join(args.question), owner=args.owner, topic=args.topic)
+
+    mode = result.get("mode")
     print(result.get("answer", ""))
+    if mode:
+        detected = ", ".join(
+            f"{k}={result[k]}" for k in ("owner", "topic") if result.get(k)
+        )
+        print(f"\n[mode: {mode}" + (f" | {detected}" if detected else "") + "]")
+
     sources = result.get("sources") or []
     if sources:
         print("\nSources:")
