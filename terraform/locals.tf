@@ -32,9 +32,21 @@ locals {
   parsing_fm_wildcard_arn    = "arn:${local.partition}:bedrock:*::foundation-model/${var.parsing_model_id}"
   generation_fm_wildcard_arn = "arn:${local.partition}:bedrock:*::foundation-model/${var.generation_model_id}"
 
+  # Orchestrator model. Same inference-profile rules as parsing/generation:
+  # newer models must be invoked through a regional inference profile.
+  orchestrator_model_arn = var.use_inference_profiles ? (
+    "arn:${local.partition}:bedrock:${var.aws_region}:${local.account_id}:inference-profile/${local.inference_prefix}${var.orchestrator_model_id}"
+  ) : "arn:${local.partition}:bedrock:${var.aws_region}::foundation-model/${var.orchestrator_model_id}"
+
+  orchestrator_fm_wildcard_arn = "arn:${local.partition}:bedrock:*::foundation-model/${var.orchestrator_model_id}"
+
   name_prefix = var.project_name
 
   # Auto-sync requires the Knowledge Base to exist, so it only turns on in
   # phase 2 (enable_knowledge_base = true) and when auto-sync is requested.
   auto_sync_enabled = var.enable_auto_sync && var.enable_knowledge_base
+
+  # The orchestrator needs the retriever (RAG), so it only turns on when the
+  # Knowledge Base exists AND the orchestrator is requested.
+  orchestrator_enabled = var.enable_orchestrator && var.enable_knowledge_base
 }

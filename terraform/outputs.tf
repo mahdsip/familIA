@@ -1,6 +1,11 @@
 output "query_api_url" {
-  description = "Full HTTPS endpoint for questions (POST). Requires SigV4/IAM auth."
+  description = "RAG retriever endpoint (POST /query, chunks only). Direct RAG access/debug. SigV4/IAM auth."
   value       = "${aws_apigatewayv2_stage.prod.invoke_url}/query"
+}
+
+output "ask_api_url" {
+  description = "Orchestrator endpoint (POST /ask). The Pi client calls this. Null until enable_orchestrator = true."
+  value       = local.orchestrator_enabled ? "${aws_apigatewayv2_stage.prod.invoke_url}/ask" : null
 }
 
 output "api_id" {

@@ -43,8 +43,28 @@ enable_advanced_parsing = true
 parsing_model_id        = "anthropic.claude-haiku-4-5-20251001-v1:0"
 
 # ----- Generation (query time; cheap for home use) ------------------------
-# Current-gen Haiku for quality; swap to amazon.nova-lite-v1:0 for lower cost.
+# NOTE: with the orchestrator enabled, the RAG /query route is retrieve-only
+# (no generation) and this var is unused by it. It remains here for the case
+# where you run without the orchestrator. All answer generation happens in the
+# orchestrator (orchestrator_model_id) when enable_orchestrator = true.
 generation_model_id = "anthropic.claude-haiku-4-5-20251001-v1:0"
+
+# ----- Orchestrator layer (routing + language) ----------------------------
+# Second, independent Lambda + POST /ask route in front of the RAG. Classifies
+# intent, extracts owner/topic, optimizes the query, and for personal questions
+# always queries the RAG first (stops if nothing is found — no general fallback).
+# Requires enable_knowledge_base = true.
+enable_orchestrator   = false
+orchestrator_model_id = "anthropic.claude-haiku-4-5-20251001-v1:0"
+orchestrator_min_score = 0
+
+# PERSONAL DATA — set the real keys ONLY in terraform.tfvars (gitignored).
+# Keep these EMPTY here. They must match the owner/topic keys used when the
+# document metadata was generated. Example (do NOT use real names in this file):
+#   orchestrator_known_owners = ["owner_a", "owner_b", "kid_a"]
+#   orchestrator_known_topics = ["health", "car", "work", "school"]
+orchestrator_known_owners = []
+orchestrator_known_topics = []
 
 # ----- API throttling / logs ---------------------------------------------
 api_throttle_burst_limit  = 5

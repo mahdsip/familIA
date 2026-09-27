@@ -233,3 +233,69 @@ variable "enable_knowledge_base" {
   type        = bool
   default     = false
 }
+
+# ----- Orchestrator layer (routing + language) ---------------------------
+
+variable "enable_orchestrator" {
+  description = <<-EOT
+    Deploy the orchestrator module: a second Lambda + POST /ask route that sits
+    in front of the RAG retriever. It classifies intent, extracts owner/topic,
+    optimizes the query, and — for personal/family questions — always queries
+    the RAG first. Requires enable_knowledge_base = true (needs the retriever).
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "orchestrator_model_id" {
+  description = <<-EOT
+    Bedrock model id the orchestrator uses for intent classification and answer
+    generation. Uses the Anthropic Messages API. Defaults to the same current-
+    gen Haiku used elsewhere; swap freely without touching architecture.
+  EOT
+  type        = string
+  default     = "anthropic.claude-haiku-4-5-20251001-v1:0"
+}
+
+variable "orchestrator_known_owners" {
+  description = <<-EOT
+    Valid owner KEYS the orchestrator may map a question to (e.g. ["owner_a",
+    "owner_b","owner_c"]). PERSONAL DATA: set this ONLY in terraform.tfvars
+    (gitignored). Keep it empty here / in the public example. These must match
+    the owner keys used when generating document metadata.
+  EOT
+  type        = list(string)
+  default     = []
+}
+
+variable "orchestrator_known_topics" {
+  description = <<-EOT
+    Valid topic KEYS the orchestrator may map a question to (e.g. ["topic_a",
+    "topic_b","topic_c"]). Set real values in terraform.tfvars (gitignored). These
+    must match the topic keys used when generating document metadata.
+  EOT
+  type        = list(string)
+  default     = []
+}
+
+variable "orchestrator_min_score" {
+  description = <<-EOT
+    Minimum retrieval score for a chunk to count as relevant. Chunks below this
+    are dropped; if none remain for a personal question, the orchestrator stops
+    and reports 'not found in documents' (no general-knowledge fallback).
+    0 = keep whatever the retriever returns.
+  EOT
+  type        = number
+  default     = 0
+}
+
+variable "orchestrator_num_results" {
+  description = <<-EOT
+    How many chunks the orchestrator asks the RAG retriever for per personal
+    question. Higher = better recall (borderline docs like scanned JPGs get
+    included) at a small extra generation-token cost. Capped by the retriever's
+    MAX_RESULTS.
+  EOT
+  type        = number
+  default     = 15
+}

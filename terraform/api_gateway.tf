@@ -77,16 +77,24 @@ resource "aws_iam_user" "pi_client" {
   path = "/familia/"
 }
 
+# The Pi client's allowed route depends on whether the orchestrator is live:
+#   * orchestrator enabled  -> Pi may ONLY call POST /ask (the language layer).
+#                              It never touches the raw RAG /query route.
+#   * orchestrator disabled -> Pi calls POST /query directly (RAG only).
+locals {
+  pi_client_route = local.orchestrator_enabled ? "POST/ask" : "POST/query"
+}
+
 resource "aws_iam_user_policy" "pi_client_invoke" {
   name = "invoke-query-api"
   user = aws_iam_user.pi_client.name
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Sid      = "InvokeQueryRoute"
+      Sid      = "InvokeAskRoute"
       Effect   = "Allow"
       Action   = "execute-api:Invoke"
-      Resource = "${aws_apigatewayv2_api.main.execution_arn}/${aws_apigatewayv2_stage.prod.name}/POST/query"
+      Resource = "${aws_apigatewayv2_api.main.execution_arn}/${aws_apigatewayv2_stage.prod.name}/${local.pi_client_route}"
     }]
   })
 }

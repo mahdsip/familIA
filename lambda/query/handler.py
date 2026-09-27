@@ -1,19 +1,41 @@
-"""familIA query Lambda.
+"""familIA retriever Lambda (RAG module — retrieval only, no generation).
 
-Answers a question using the Bedrock Knowledge Base via RetrieveAndGenerate
-(managed RAG: retrieve relevant chunks + generate a grounded answer).
+This is the RAG layer, intentionally kept as a PURE RETRIEVAL engine: it calls
+Bedrock `Retrieve` (NOT `RetrieveAndGenerate`) and returns the matching chunks
+with their metadata and relevance score. It never invokes a generation model
+and never writes prose. All natural-language generation lives in the separate
+orchestrator module, so the two layers stay completely independent.
 
-Precision & provenance features:
-  * Folder-derived metadata (topic, owner, subpath, doc_type, ...) is indexed
-    as filterable attributes. Callers may pass `owner`/`topic` or a raw
-    `filter` to narrow retrieval, which sharply improves precision when a
-    question is about a specific person or subject.
-  * Every answer returns the SOURCE of each retrieved chunk: the S3 URI plus
-    its topic/owner/source_path metadata — so you always know which file the
-    information came from.
+Contract
+--------
+Input (JSON body via API Gateway, or direct Lambda invoke):
+    {
+      "query": "text to search for",   # or "question" (alias)
+      "owner": "owner_key",            # optional convenience filter
+      "topic": "topic_key",            # optional convenience filter
+      "filter": { ... },               # optional raw Bedrock filter (wins)
+      "numberOfResults": 8             # optional override
+    }
 
-No personal data lives in this code. The family context comes entirely from
-the indexed documents (RAG), never from a hard-coded prompt.
+Output:
+    {
+      "chunks": [
+        {
+          "text": "...",               # chunk content
+          "score": 0.83,               # relevance score (higher = closer)
+          "uri": "s3://.../file.pdf",
+          "topic": "topic_key",
+          "owner": "owner_key",
+          "source_path": "...",
+          "captured_date": "...",
+          "modified_date": "..."
+        },
+        ...
+      ]
+    }
+
+No personal data lives in this code. Family context comes entirely from the
+indexed documents (RAG), never from a hard-coded prompt.
 """
 
 import base64
@@ -28,25 +50,10 @@ logger = logging.getLogger()
 logger.setLevel(os.environ.get("LOG_LEVEL", "INFO"))
 
 KNOWLEDGE_BASE_ID = os.environ["KNOWLEDGE_BASE_ID"]
-MODEL_ARN = os.environ["GENERATION_MODEL_ARN"]
 REGION = os.environ.get("AWS_REGION", "eu-central-1")
 NUM_RESULTS = int(os.environ.get("NUM_RESULTS", "8"))
-MAX_QUESTION_CHARS = int(os.environ.get("MAX_QUESTION_CHARS", "1000"))
-
-DEFAULT_PROMPT = (
-    "You are a private family assistant. Answer the question using ONLY the "
-    "information in the search results below. If the answer is not present, "
-    "say you could not find it in the documents. Be concise and factual, and "
-    "cite concrete details (dates, names, values) exactly as written. "
-    "Mention which document the information comes from.\n\n"
-    "Search results:\n$search_results$\n\nQuestion: $query$\n\nAnswer:"
-)
-# IMPORTANT: A custom promptTemplate SUPPRESSES RetrieveAndGenerate citations,
-# and returning the source file is a hard requirement. So we DO NOT send a
-# custom template by default (empty => Bedrock's default, which keeps citations
-# and still produces grounded answers). Set PROMPT_TEMPLATE explicitly only if
-# you accept losing source citations. DEFAULT_PROMPT is kept for reference.
-PROMPT_TEMPLATE = os.environ.get("PROMPT_TEMPLATE", "").strip()
+MAX_RESULTS = int(os.environ.get("MAX_RESULTS", "25"))
+MAX_QUERY_CHARS = int(os.environ.get("MAX_QUERY_CHARS", "1000"))
 
 _bedrock = boto3.client(
     "bedrock-agent-runtime",
@@ -61,6 +68,20 @@ def _response(status, body):
         "headers": {"Content-Type": "application/json"},
         "body": json.dumps(body, ensure_ascii=False),
     }
+
+
+def _parse_payload(event):
+    """Accept both an API Gateway proxy event and a direct Lambda invoke.
+
+    A direct invoke (from the orchestrator) passes the payload as the event
+    itself. An API Gateway event wraps it in a (possibly base64) `body`.
+    """
+    if "body" in event:
+        raw_body = event.get("body") or "{}"
+        if event.get("isBase64Encoded"):
+            raw_body = base64.b64decode(raw_body).decode("utf-8")
+        return json.loads(raw_body)
+    return event
 
 
 def _build_filter(payload):
@@ -87,90 +108,67 @@ def _build_filter(payload):
     return {"andAll": clauses}
 
 
+def _extract_chunks(result):
+    """Flatten Bedrock Retrieve results into a compact chunk list."""
+    chunks = []
+    for item in result.get("retrievalResults", []):
+        md = item.get("metadata", {}) or {}
+        chunks.append(
+            {
+                "text": item.get("content", {}).get("text", ""),
+                "score": item.get("score"),
+                "uri": item.get("location", {}).get("s3Location", {}).get("uri"),
+                "topic": md.get("topic"),
+                "owner": md.get("owner"),
+                "source_path": md.get("source_path"),
+                # Dates help disambiguate duplicates (e.g. newest DNI).
+                "captured_date": md.get("captured_date"),
+                "modified_date": md.get("modified_date"),
+            }
+        )
+    return chunks
+
+
 def handler(event, context):
-    raw_body = event.get("body") or "{}"
-    if event.get("isBase64Encoded"):
-        raw_body = base64.b64decode(raw_body).decode("utf-8")
+    if not KNOWLEDGE_BASE_ID:
+        return _response(503, {"error": "Knowledge Base not enabled yet."})
 
     try:
-        payload = json.loads(raw_body)
+        payload = _parse_payload(event)
     except (ValueError, TypeError):
         return _response(400, {"error": "Body must be valid JSON."})
 
-    question = (payload.get("question") or payload.get("query") or "").strip()
-    if not question:
-        return _response(400, {"error": "Missing 'question' field."})
-    if len(question) > MAX_QUESTION_CHARS:
-        return _response(400, {"error": "Question too long."})
+    query = (payload.get("query") or payload.get("question") or "").strip()
+    if not query:
+        return _response(400, {"error": "Missing 'query' field."})
+    if len(query) > MAX_QUERY_CHARS:
+        return _response(400, {"error": "Query too long."})
 
-    session_id = payload.get("sessionId")
+    try:
+        num_results = int(payload.get("numberOfResults", NUM_RESULTS))
+    except (ValueError, TypeError):
+        num_results = NUM_RESULTS
+    num_results = max(1, min(num_results, MAX_RESULTS))
 
-    vector_search = {"numberOfResults": NUM_RESULTS}
+    vector_search = {"numberOfResults": num_results}
     retrieval_filter = _build_filter(payload)
     if retrieval_filter:
         vector_search["filter"] = retrieval_filter
 
-    kb_config = {
+    request = {
         "knowledgeBaseId": KNOWLEDGE_BASE_ID,
-        "modelArn": MODEL_ARN,
+        "retrievalQuery": {"text": query},
         "retrievalConfiguration": {"vectorSearchConfiguration": vector_search},
     }
-    # Only send a custom prompt template if explicitly configured — otherwise
-    # Bedrock's default is used, which preserves source citations.
-    if PROMPT_TEMPLATE:
-        kb_config["generationConfiguration"] = {
-            "promptTemplate": {"textPromptTemplate": PROMPT_TEMPLATE}
-        }
-
-    request = {
-        "input": {"text": question},
-        "retrieveAndGenerateConfiguration": {
-            "type": "KNOWLEDGE_BASE",
-            "knowledgeBaseConfiguration": kb_config,
-        },
-    }
-    if session_id:
-        request["sessionId"] = session_id
 
     try:
-        result = _bedrock.retrieve_and_generate(**request)
+        result = _bedrock.retrieve(**request)
     except _bedrock.exceptions.ValidationException as exc:
-        # Most commonly a malformed filter.
         logger.warning("Validation error: %s", exc)
         return _response(400, {"error": "Invalid request (check filter/owner/topic)."})
     except Exception:
-        logger.exception("retrieve_and_generate failed")
-        return _response(502, {"error": "Upstream model error."})
+        logger.exception("retrieve failed")
+        return _response(502, {"error": "Upstream retrieval error."})
 
-    answer = result.get("output", {}).get("text", "")
-
-    # Build rich source citations: URI + folder metadata, deduped by URI.
-    sources = []
-    seen = set()
-    for citation in result.get("citations", []):
-        for ref in citation.get("retrievedReferences", []):
-            uri = ref.get("location", {}).get("s3Location", {}).get("uri")
-            if not uri or uri in seen:
-                continue
-            seen.add(uri)
-            md = ref.get("metadata", {}) or {}
-            sources.append(
-                {
-                    "uri": uri,
-                    "topic": md.get("topic"),
-                    "owner": md.get("owner"),
-                    "source_path": md.get("source_path"),
-                    # Dates help disambiguate duplicates (e.g. newest DNI).
-                    "captured_date": md.get("captured_date"),
-                    "modified_date": md.get("modified_date"),
-                }
-            )
-
-    return _response(
-        200,
-        {
-            "answer": answer,
-            "sessionId": result.get("sessionId"),
-            "sources": sources,
-        },
-    )
+    chunks = _extract_chunks(result)
+    return _response(200, {"chunks": chunks})
