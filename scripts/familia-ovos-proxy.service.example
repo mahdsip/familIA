@@ -1,0 +1,42 @@
+# systemd unit for the familIA OpenAI-compatible proxy on the Raspberry Pi.
+#
+# Install (on the Pi):
+#   1. Copy scripts/ovos_openai_proxy.py to /opt/familia/ovos_openai_proxy.py
+#   2. Create /etc/familia/proxy.env from the block below (fill real values).
+#      chmod 600 it — it references AWS creds.
+#   3. sudo cp this file to /etc/systemd/system/familia-ovos-proxy.service
+#      (rename it, dropping ".example")
+#   4. sudo systemctl daemon-reload && sudo systemctl enable --now familia-ovos-proxy
+#
+# /etc/familia/proxy.env  (NOT committed — real values live only on the Pi):
+#   FAMILIA_API_URL=https://xxxx.execute-api.eu-central-1.amazonaws.com/prod/ask
+#   AWS_REGION=eu-central-1
+#   PROXY_API_KEY=familia-local
+#   PROXY_HOST=127.0.0.1
+#   PROXY_PORT=8080
+#   # AWS creds for the familia-pi-client user (from create_pi_credentials.sh):
+#   AWS_ACCESS_KEY_ID=AKIA...
+#   AWS_SECRET_ACCESS_KEY=...
+
+[Unit]
+Description=familIA OpenAI-compatible proxy (OVOS -> API Gateway /ask, SigV4)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust User/paths to your Pi. Run as a non-root, unprivileged user.
+User=ovos
+EnvironmentFile=/etc/familia/proxy.env
+ExecStart=/usr/bin/python3 /opt/familia/ovos_openai_proxy.py
+Restart=on-failure
+RestartSec=3
+# Hardening: loopback-only service, no privilege, no new privileges.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/opt/familia
+
+[Install]
+WantedBy=multi-user.target
