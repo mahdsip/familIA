@@ -48,6 +48,10 @@ secrets.*
 pi-credentials.env
 *-credentials.env
 
+# OVOS proxy env (holds AWS creds + local key). Normally lives at
+# /etc/familia/proxy.env on the Pi; ignore it here too just in case.
+proxy.env
+
 # Local owner mapping — contains real family names. NEVER commit. Only the
 # *.example.json template is tracked.
 familia.config.json

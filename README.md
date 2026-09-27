@@ -4,10 +4,13 @@ A private, low-cost **RAG assistant over your own family documents**, built
 entirely with Terraform on AWS.
 
 Documents live encrypted in S3 (synced from your local disk). Amazon Bedrock
-Knowledge Bases index them into a cheap **S3 Vectors** store, and a small Lambda
-answers questions grounded in those documents via `RetrieveAndGenerate`. A
-Raspberry Pi running an OpenVoice server calls the API — authenticated with
-IAM/SigV4, so there are no shared secrets.
+Knowledge Bases index them into a cheap **S3 Vectors** store. Two independent
+Lambda modules serve questions: a **retriever** (pure RAG — Bedrock `Retrieve`,
+returns chunks only, no generation) and an **orchestrator** in front of it that
+classifies intent, auto-detects the person/topic, and — for personal/family
+questions — always queries the RAG first. A Raspberry Pi running an OpenVoice
+server calls the orchestrator (`POST /ask`) — authenticated with IAM/SigV4, so
+there are no shared secrets.
 
 > **Privacy by design:** no personal data is ever committed to this repo. The
 > family context comes exclusively from the documents you index (RAG), never
@@ -24,12 +27,15 @@ flowchart TD
     end
 
     subgraph Pi["Raspberry Pi"]
-      OV[OpenVoice server] -->|POST /query, SigV4| API
+      OV[OpenVoice server] -->|OpenAI API, localhost| PX[OpenAI-compat proxy]
+      PX -->|POST /ask, SigV4| API
     end
 
     subgraph AWS["AWS — eu-central-1"]
-      API[API Gateway HTTP API<br/>IAM auth] --> QL[Query Lambda]
-      QL -->|RetrieveAndGenerate| KB[Bedrock Knowledge Base]
+      API[API Gateway HTTP API<br/>IAM auth] --> ORCH[Orchestrator Lambda]
+      ORCH -->|intent + answer: Haiku| BR
+      ORCH -->|personal? RAG first<br/>lambda:InvokeFunction| QL[Retriever Lambda]
+      QL -->|Retrieve chunks only| KB[Bedrock Knowledge Base]
       KB -->|embeddings: Titan v2| BR[(Bedrock models)]
       KB -->|vectors| V[(S3 Vectors)]
       KB -->|reads docs| S3[(S3 documents<br/>KMS-encrypted)]
@@ -49,7 +55,8 @@ flowchart TD
 | Embeddings | **Titan Text v2 @ 1024 dims** | Strong retrieval quality; dims are immutable so we pick well once. |
 | Chunking | **Hierarchical** | Retrieves precise child chunks, feeds larger parent chunks for context. |
 | Parsing | **Bedrock FM parsing** | Understands tables, layout and scanned PDFs — the biggest lever on quality. |
-| Generation | **Configurable (Haiku default)** | Query volume is tiny at home, so cost is negligible; kept swappable. |
+| RAG isolation | **Retriever = retrieve-only** | The RAG returns chunks; all language generation lives in the orchestrator, so the layers are fully decoupled and independently testable. |
+| Routing | **Orchestrator Lambda (Haiku)** | Classifies personal vs general, auto-detects owner/topic (from a deploy-injected allowlist), queries RAG first for personal questions, stops if nothing is found (no general-knowledge fallback for personal). |
 | Auth | **IAM / SigV4** | Strong auth, zero extra cost, no secrets in the repo. |
 | Encryption | **Customer-managed KMS key** | Auditable, revocable; encrypts docs, vectors and logs. |
 
@@ -66,19 +73,23 @@ terraform/            # all infrastructure as code
   s3_vectors.tf       # S3 Vectors bucket + index (immutable dims/metric)
   iam_bedrock_kb.tf   # least-privilege role for the Knowledge Base
   knowledge_base.tf   # Bedrock KB + data source (hierarchical + advanced parsing)
-  lambda_query.tf     # query Lambda + role + logs
+  lambda_query.tf     # retriever Lambda (retrieve-only) + role + logs
+  lambda_orchestrator.tf # orchestrator Lambda + role + /ask route (gated)
   api_gateway.tf      # HTTP API (IAM auth) + Raspberry Pi IAM user
   lambda_auto_sync.tf # reindex Lambda (S3 event + weekly schedule)
   outputs.tf
   terraform.tfvars.example
 lambda/
-  query/handler.py       # RetrieveAndGenerate; generic PII-free prompt
-  auto_sync/handler.py   # StartIngestionJob with overlap guard
+  query/handler.py         # retriever: Bedrock Retrieve, returns chunks only
+  orchestrator/handler.py  # routing + language layer (intent, RAG-first, answer)
+  auto_sync/handler.py     # StartIngestionJob with overlap guard
 scripts/
   bootstrap_backend.sh    # one-time: create the state bucket
   create_pi_credentials.sh# create the Pi IAM access key (secret stays local)
   sync_docs.sh            # aws s3 sync local -> bucket (use in cron)
-  ask.py                  # SigV4 reference client for the Pi
+  ask.py                  # SigV4 reference client for the Pi (calls /ask)
+  ovos_openai_proxy.py    # OpenAI-compatible proxy: OVOS -> /ask (SigV4)
+  familia-ovos-proxy.service.example # systemd unit for the proxy on the Pi
   destroy_poc.sh          # delete the old hand-built PoC resources
 ```
 
@@ -129,6 +140,11 @@ Base start empty and are only built once your documents exist:
 terraform apply -var="enable_knowledge_base=true"
 # (or set enable_knowledge_base = true in terraform.tfvars)
 ```
+
+- **Phase 3 (optional, `enable_orchestrator = true`):** adds the orchestrator
+  Lambda and the `POST /ask` route in front of the RAG (see
+  [The orchestrator layer](#the-orchestrator-layer-routing)). Requires the
+  Knowledge Base. Without it, the Pi calls the retrieve-only `/query` directly.
 
 Prefer local state? Comment out the `backend "s3" {}` block in `versions.tf` and
 run `terraform init` with no backend config. Never commit the `.tfstate` file.
@@ -363,7 +379,52 @@ on-demand and need no profile.
 
 ---
 
+## The orchestrator layer (routing)
+
+The Pi talks to the **orchestrator** (`POST /ask`), not the raw RAG. Enable it
+in phase 3 (needs the Knowledge Base):
+
+```bash
+# In terraform.tfvars (gitignored — safe for the real owner/topic keys):
+enable_orchestrator       = true
+orchestrator_known_owners = ["owner_a", "owner_b", "kid_a"]   # your folder keys
+orchestrator_known_topics = ["health", "car", "work"]         # your folder keys
+
+terraform apply -var="enable_knowledge_base=true"
+```
+
+The orchestrator, per question:
+
+1. **Classifies** intent with a cheap LLM (Haiku 4.5) and, restricted to the
+   injected owner/topic allowlist, extracts an `owner`/`topic` and an optimized
+   search query. The allowlist keeps family names out of the repo and stops the
+   model inventing owners.
+2. **Routes:**
+   - *personal/family* → **always queries the RAG retriever first** (with the
+     detected owner/topic filter). If chunks come back, it generates a grounded
+     answer with source citations. If nothing is found, it **stops** and says so
+     — no fallback to general knowledge (privacy/accuracy first).
+   - *general knowledge* → answers from the model's own knowledge; the RAG is
+     never consulted.
+
+When the orchestrator is enabled, the Pi's IAM user is restricted to `POST /ask`
+only — it cannot reach the raw `/query` retriever. The `/query` route stays for
+direct RAG access/debugging from an admin identity.
+
+Recall tuning: `orchestrator_num_results` (default 15) controls how many chunks
+the orchestrator pulls per personal question — higher improves recall for
+borderline docs (e.g. scanned JPG reports) at a tiny generation-token cost.
+`orchestrator_min_score` optionally drops low-score chunks.
+
 ## Use it from the Raspberry Pi
+
+OpenVoice OS speaks the **OpenAI Chat Completions API** (a base URL ending in
+`/v1`, a Bearer key). The familIA API is IAM/SigV4 with its own contract, so a
+tiny **loopback proxy** on the Pi bridges the two:
+
+```
+OVOS ──OpenAI (localhost)──► ovos_openai_proxy.py ──SigV4──► API Gateway /ask
+```
 
 ```bash
 # 1. Create the Pi's IAM access key (run once, on your machine)
@@ -371,34 +432,65 @@ AWS_PROFILE=<profile> ./scripts/create_pi_credentials.sh \
   "$(cd terraform && terraform output -raw pi_client_user)" pi-credentials.env
 # pi-credentials.env is gitignored — copy it to the Pi over scp, never commit it.
 
-# 2. On the Pi
+# 2. On the Pi: install and configure the proxy
+sudo mkdir -p /opt/familia /etc/familia
+sudo cp scripts/ovos_openai_proxy.py /opt/familia/
 pip install botocore requests
-source pi-credentials.env
-export FAMILIA_API_URL="$(terraform output -raw query_api_url)"   # or paste it
 
-python3 scripts/ask.py "your question here"
-# Narrow retrieval by folder metadata for higher precision:
-python3 scripts/ask.py --owner alba --topic salud "when was the last check-up?"
+sudo tee /etc/familia/proxy.env >/dev/null <<'EOF'
+FAMILIA_API_URL=<paste ask_api_url output, e.g. https://xxxx.execute-api.eu-central-1.amazonaws.com/prod/ask>
+AWS_REGION=eu-central-1
+PROXY_API_KEY=familia-local
+PROXY_HOST=127.0.0.1
+PROXY_PORT=8080
+AWS_ACCESS_KEY_ID=<from pi-credentials.env>
+AWS_SECRET_ACCESS_KEY=<from pi-credentials.env>
+EOF
+sudo chmod 600 /etc/familia/proxy.env
+
+# 3. Run it as a service (template provided)
+sudo cp scripts/familia-ovos-proxy.service.example \
+        /etc/systemd/system/familia-ovos-proxy.service
+sudo systemctl daemon-reload && sudo systemctl enable --now familia-ovos-proxy
+
+# 4. Smoke-test locally
+curl http://127.0.0.1:8080/v1/chat/completions \
+  -H "Authorization: Bearer familia-local" -H "Content-Type: application/json" \
+  -d '{"model":"familia","messages":[{"role":"user","content":"your question"}]}'
 ```
 
-The OpenVoice server can import `ask()` from `scripts/ask.py` and pass the
-transcribed question straight through, then speak `result["answer"]`.
+Then point OVOS's OpenAI-compatible LLM at the proxy:
+
+| OVOS field | Value |
+|---|---|
+| Base URL | `http://127.0.0.1:8080/v1` |
+| API key | `familia-local` (local only; unrelated to AWS) |
+| Model | `familia` |
+| Style / length / focus | free text (the orchestrator enforces its own Spanish, concise, documents-first style) |
+
+Prefer a direct CLI (no proxy)? `scripts/ask.py` signs `/ask` itself:
+
+```bash
+source pi-credentials.env
+export FAMILIA_API_URL="$(cd terraform && terraform output -raw ask_api_url)"
+python3 scripts/ask.py "¿cuándo fue la última revisión?"
+```
 
 Request/response contract:
 
 ```jsonc
-// POST /query   (SigV4-signed)
+// POST /ask   (SigV4-signed) — the orchestrator
 {
   "question": "…",
-  "sessionId": "optional-for-follow-ups",
-  "owner": "optional folder-owner filter",
-  "topic": "optional folder-topic filter",
-  "filter": { /* optional raw Bedrock retrieval filter, overrides owner/topic */ }
+  "owner": "optional override (normally auto-detected)",
+  "topic": "optional override (normally auto-detected)"
 }
 // 200 OK
 {
   "answer": "…",
-  "sessionId": "…",
+  "mode": "personal" | "personal_not_found" | "general",
+  "owner": "alba" | null,     // what the orchestrator detected
+  "topic": "salud" | null,
   "sources": [
     { "uri": "s3://…/salud/alba/informes/analisis.pdf",
       "topic": "salud", "owner": "alba",
@@ -406,6 +498,11 @@ Request/response contract:
   ]
 }
 ```
+
+The raw RAG retriever (`POST /query`, admin/debug only) has a different,
+retrieve-only contract: it takes `{query, owner?, topic?, filter?,
+numberOfResults?}` and returns `{chunks: [{text, score, uri, ...}]}` with no
+`answer`.
 
 ---
 
