@@ -122,7 +122,12 @@ def _openai_chat_response(answer: str) -> dict:
 
 
 def _openai_stream_chunks(answer: str):
-    """OpenAI-style SSE chunks: role, content, finish."""
+    """OpenAI-style SSE chunks: role, content, flush, finish.
+
+    The OVOS solver only speaks text once a chunk ends in sentence punctuation,
+    skips chunks ending in "<digit>." and never flushes leftovers at the end.
+    A trailing newline chunk forces it to speak answers like "...de 2025."
+    """
     base = {
         "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",
         "object": "chat.completion.chunk",
@@ -132,6 +137,7 @@ def _openai_stream_chunks(answer: str):
     deltas = [
         ({"role": "assistant"}, None),
         ({"content": answer}, None),
+        ({"content": "\n"}, None),
         ({}, "stop"),
     ]
     for delta, finish in deltas:
