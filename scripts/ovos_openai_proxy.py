@@ -121,6 +121,23 @@ def _openai_chat_response(answer: str) -> dict:
     }
 
 
+def _openai_stream_chunks(answer: str):
+    """OpenAI-style SSE chunks: role, content, finish."""
+    base = {
+        "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",
+        "object": "chat.completion.chunk",
+        "created": int(time.time()),
+        "model": MODEL_NAME,
+    }
+    deltas = [
+        ({"role": "assistant"}, None),
+        ({"content": answer}, None),
+        ({}, "stop"),
+    ]
+    for delta, finish in deltas:
+        yield {**base, "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "familia-ovos-proxy/1.0"
 
@@ -131,6 +148,17 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    def _send_stream(self, answer):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        for chunk in _openai_stream_chunks(answer):
+            line = "data: " + json.dumps(chunk, ensure_ascii=False) + "\n\n"
+            self.wfile.write(line.encode("utf-8"))
+        self.wfile.write(b"data: [DONE]\n\n")
+        self.wfile.flush()
 
     def _authorized(self) -> bool:
         if not PROXY_API_KEY:
@@ -189,6 +217,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(502, {"error": {"message": f"Proxy error: {exc}"}})
 
         answer = result.get("answer", "") or "No he podido obtener una respuesta."
+        if body.get("stream"):
+            return self._send_stream(answer)
         return self._send(200, _openai_chat_response(answer))
 
 
