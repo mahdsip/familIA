@@ -198,12 +198,23 @@ def _retrieve(query, owner, topic):
 # --------------------------------------------------------------------------
 # Step 3: generate the final answer from retrieved chunks
 # --------------------------------------------------------------------------
+# Answers are spoken aloud by the voice assistant, so both answer prompts share
+# the same spoken style and a short token budget.
+_VOICE_STYLE = (
+    "Tu respuesta se leerá en voz alta en un asistente de voz: responde en el "
+    "mismo idioma que la pregunta, con un estilo hablado y natural, normalmente "
+    "en una o dos frases cortas. Empieza directamente con la respuesta. Sin "
+    "emojis, sin markdown, sin viñetas, sin aclaraciones entre paréntesis y sin "
+    "preguntas de cierre."
+)
+ANSWER_MAX_TOKENS = 300
+
 _ANSWER_SYSTEM = (
     "Eres un asistente familiar privado. Responde a la pregunta del usuario "
     "usando ÚNICAMENTE la información de los fragmentos de documentos que se te "
     "proporcionan. No inventes datos. Si los fragmentos no contienen la "
-    "respuesta, dilo claramente. Sé conciso y factual, y cita datos concretos "
-    "(fechas, nombres, valores) tal como aparecen. Responde en español."
+    "respuesta, dilo claramente. Incluye los datos concretos que respondan a la "
+    "pregunta (fechas, nombres, valores) tal como aparecen. " + _VOICE_STYLE
 )
 
 
@@ -217,15 +228,15 @@ def _generate_answer(question, chunks):
         f"Fragmentos de documentos:\n{context}\n\n"
         f"Pregunta: {question}\n\nRespuesta:"
     )
-    return _invoke_model(_ANSWER_SYSTEM, user_text, max_tokens=800, temperature=0.0)
+    return _invoke_model(_ANSWER_SYSTEM, user_text, max_tokens=ANSWER_MAX_TOKENS, temperature=0.0)
 
 
 def _general_answer(question):
     system = (
-        "Eres un asistente útil y conciso. Responde a la pregunta con tu "
-        "conocimiento general. Responde en español."
+        "Eres un asistente útil. Responde a la pregunta con tu conocimiento "
+        "general. " + _VOICE_STYLE
     )
-    return _invoke_model(system, question, max_tokens=800, temperature=0.2)
+    return _invoke_model(system, question, max_tokens=ANSWER_MAX_TOKENS, temperature=0.2)
 
 
 def _sources_from_chunks(chunks):
