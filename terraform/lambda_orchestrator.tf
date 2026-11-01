@@ -46,9 +46,10 @@ resource "aws_iam_role_policy" "orchestrator_lambda" {
         Resource = "${aws_cloudwatch_log_group.orchestrator[0].arn}:*"
       },
       {
-        # Invoke the orchestrator model (Bedrock Messages API). With inference
-        # profiles, grant both the profile ARN and the underlying cross-region
-        # foundation-model ARN it routes to.
+        # Invoke the orchestrator model (Bedrock Messages API, and Converse for
+        # live tools; Converse is authorized by bedrock:InvokeModel). With
+        # inference profiles, grant both the profile ARN and the underlying
+        # cross-region foundation-model ARN it routes to.
         Sid    = "InvokeOrchestratorModel"
         Effect = "Allow"
         Action = [
@@ -96,6 +97,7 @@ resource "aws_lambda_function" "orchestrator" {
       RETRIEVER_FUNCTION_NAME = aws_lambda_function.query.function_name
       NUM_RESULTS             = tostring(var.orchestrator_num_results)
       MIN_SCORE               = tostring(var.orchestrator_min_score)
+      MAX_TOOL_ROUNDS         = tostring(var.orchestrator_max_tool_rounds)
       # Owners/topics come from gitignored tfvars — never the repo.
       OWNERS    = join(",", var.orchestrator_known_owners)
       TOPICS    = join(",", var.orchestrator_known_topics)
