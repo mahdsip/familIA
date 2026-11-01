@@ -57,6 +57,9 @@ generation_model_id = "anthropic.claude-haiku-4-5-20251001-v1:0"
 enable_orchestrator   = false
 orchestrator_model_id = "anthropic.claude-haiku-4-5-20251001-v1:0"
 orchestrator_min_score = 0
+# Live home tools (return of control via the Pi's MCP client): max tool
+# rounds per question before giving up.
+orchestrator_max_tool_rounds = 3
 
 # PERSONAL DATA — set the real keys ONLY in terraform.tfvars (gitignored).
 # Keep these EMPTY here. They must match the owner/topic keys used when the

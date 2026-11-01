@@ -299,3 +299,18 @@ variable "orchestrator_num_results" {
   type        = number
   default     = 15
 }
+
+variable "orchestrator_max_tool_rounds" {
+  description = <<-EOT
+    Live tools (return of control): maximum number of tool-request rounds the
+    orchestrator returns to the Pi for one question before giving up. Each round
+    is one extra /ask call from the Pi, so this bounds voice latency and cost.
+  EOT
+  type        = number
+  default     = 3
+
+  validation {
+    condition     = var.orchestrator_max_tool_rounds >= 1 && var.orchestrator_max_tool_rounds <= 6
+    error_message = "orchestrator_max_tool_rounds must be between 1 and 6."
+  }
+}
