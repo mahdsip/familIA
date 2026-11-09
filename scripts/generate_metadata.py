@@ -17,7 +17,7 @@ with filterable metadata that Bedrock indexes alongside the vectors:
     {
       "metadataAttributes": {
         "topic":       "...",
-        "owner":       "...",             # normalised alias (e.g. "alba")
+        "owner":       "...",             # normalised alias (e.g. "alice")
         "owner_name":  "...",             # display name from config, if known
         "subpath":     "...",             # remaining folders, slash-joined
         "doc_type":    "pdf",

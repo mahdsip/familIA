@@ -90,6 +90,8 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+dist/
+install.log
 
 # ----- OS / editor -----
 .DS_Store

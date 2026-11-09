@@ -26,9 +26,17 @@ flowchart TD
       Disk[Local documents] -->|weekly aws s3 sync| S3
     end
 
-    subgraph Pi["Raspberry Pi"]
-      OV[OpenVoice server] -->|OpenAI API, localhost| PX[OpenAI-compat proxy]
+    subgraph Pi["Raspberry Pi (OVOS)"]
+      OV[OpenVoice server] -->|OpenAI API, localhost| PX[OpenAI-compat proxy<br/>+ MCP client]
       PX -->|POST /ask, SigV4| API
+    end
+
+    subgraph Home["Home LAN"]
+      PX -->|SSH, stdio MCP<br/>forced command| MCP[home-mcp<br/>MCP Pi]
+      MCP -->|HTTP, outbound only| PROM[Prometheus]
+      MCP -->|allowlisted lights/plugs| HA[Home Assistant]
+      MCP -->|read-only| PLEX[Plex · PhotoPrism]
+      MCP -->|CalDAV / CardDAV| NC[Nextcloud]
     end
 
     subgraph AWS["AWS — eu-central-1"]
@@ -87,11 +95,22 @@ scripts/
   bootstrap_backend.sh    # one-time: create the state bucket
   create_pi_credentials.sh# create the Pi IAM access key (secret stays local)
   sync_docs.sh            # aws s3 sync local -> bucket (use in cron)
-  ask.py                  # SigV4 reference client for the Pi (calls /ask)
+  generate_metadata.py    # folder-derived metadata sidecars (called by sync_docs.sh)
+  familia.config.example.json # owners/options template (copy to familia.config.json)
+  ingest.sh               # first / full ingestion in batches (>1000 files)
   ovos_openai_proxy.py    # OpenAI-compatible proxy: OVOS -> /ask (SigV4)
+  familia_mcp_bridge.py   # proxy-side MCP client (live home tools over SSH)
+  requirements-proxy.*    # pinned, hashed deps for the proxy venv (.in -> .txt)
   familia-ovos-proxy.service.example # systemd unit for the proxy on the Pi
-  destroy_poc.sh          # delete the old hand-built PoC resources
+tests/                    # orchestrator + proxy tests (pytest)
 ```
+
+**Related repositories**
+
+| Repo | What it holds |
+|---|---|
+| [home-mcp](https://github.com/mahdsip/home-mcp) | The home MCP server on the MCP Pi (`familia-mcp`): Prometheus, Home Assistant, Plex, PhotoPrism and Nextcloud tools, installer and allowlist template. |
+| [monitoring](https://github.com/mahdsip/monitoring) | The home monitoring stack the assistant reads from: Prometheus, Grafana network map, temperature alerts and automated OS / Docker updates. |
 
 ---
 
@@ -166,12 +185,12 @@ Retrieval quality is driven by three things, all wired in:
    the tree and writes a `<file>.metadata.json` sidecar next to each document:
 
    ```jsonc
-   // salud/alba/informes/analisis.pdf.metadata.json
+   // salud/alice/informes/analisis.pdf.metadata.json
    {
      "metadataAttributes": {
-       "topic": "salud", "owner": "alba", "subpath": "informes",
+       "topic": "salud", "owner": "alice", "subpath": "informes",
        "doc_type": "pdf", "file_name": "analisis.pdf",
-       "source_path": "salud/alba/informes/analisis.pdf"
+       "source_path": "salud/alice/informes/analisis.pdf"
      }
    }
    ```
@@ -364,10 +383,9 @@ extracted image artifacts. HEIC and DICOM are not supported by Bedrock parsing.
 ### Source citations
 
 Answers always include a `sources` array (S3 URI + `owner`/`topic`/`source_path`).
-Note: supplying a **custom generation prompt template suppresses citations** in
-RetrieveAndGenerate, so the query Lambda uses Bedrock's default template by
-default (`PROMPT_TEMPLATE` env unset). Only set `PROMPT_TEMPLATE` if you accept
-losing source attribution.
+The retriever calls Bedrock `Retrieve` and returns each chunk with its location
+and metadata; the orchestrator generates the answer and attaches the sources of
+the chunks it used, so attribution never depends on a prompt template.
 
 ### Models & inference profiles
 
@@ -434,8 +452,9 @@ AWS_PROFILE=<profile> ./scripts/create_pi_credentials.sh \
 
 # 2. On the Pi: install and configure the proxy
 sudo mkdir -p /opt/familia /etc/familia
-sudo cp scripts/ovos_openai_proxy.py /opt/familia/
-pip install botocore requests
+sudo cp scripts/ovos_openai_proxy.py scripts/familia_mcp_bridge.py /opt/familia/
+sudo python3 -m venv /opt/familia/venv
+sudo /opt/familia/venv/bin/pip install --require-hashes -r scripts/requirements-proxy.txt
 
 sudo tee /etc/familia/proxy.env >/dev/null <<'EOF'
 FAMILIA_API_URL=<paste ask_api_url output, e.g. https://xxxx.execute-api.eu-central-1.amazonaws.com/prod/ask>
@@ -468,14 +487,6 @@ Then point OVOS's OpenAI-compatible LLM at the proxy:
 | Model | `familia` |
 | Style / length / focus | free text (the orchestrator enforces its own Spanish, concise, documents-first style) |
 
-Prefer a direct CLI (no proxy)? `scripts/ask.py` signs `/ask` itself:
-
-```bash
-source pi-credentials.env
-export FAMILIA_API_URL="$(cd terraform && terraform output -raw ask_api_url)"
-python3 scripts/ask.py "¿cuándo fue la última revisión?"
-```
-
 Request/response contract:
 
 ```jsonc
@@ -483,18 +494,25 @@ Request/response contract:
 {
   "question": "…",
   "owner": "optional override (normally auto-detected)",
-  "topic": "optional override (normally auto-detected)"
+  "topic": "optional override (normally auto-detected)",
+  // Live tools only (sent by the proxy, see "Live home tools"):
+  "client_time": "2026-10-31T18:05+01:00",
+  "tools": [{ "name": "…", "description": "…", "input_schema": {…} }],
+  "messages": [ /* Converse transcript echoed back between rounds */ ],
+  "tool_results": [{ "tool_use_id": "…", "status": "success|error", "content": {…} }]
 }
+// 200 OK, intermediate round (live tools):
+{ "mode": "tool_use", "tool_calls": [{ "id": "…", "name": "…", "input": {…} }], "messages": […] }
 // 200 OK
 {
   "answer": "…",
-  "mode": "personal" | "personal_not_found" | "general",
-  "owner": "alba" | null,     // what the orchestrator detected
+  "mode": "personal" | "personal_not_found" | "general" | "live",
+  "owner": "alice" | null,     // what the orchestrator detected
   "topic": "salud" | null,
   "sources": [
-    { "uri": "s3://…/salud/alba/informes/analisis.pdf",
-      "topic": "salud", "owner": "alba",
-      "source_path": "salud/alba/informes/analisis.pdf" }
+    { "uri": "s3://…/salud/alice/informes/analisis.pdf",
+      "topic": "salud", "owner": "alice",
+      "source_path": "salud/alice/informes/analisis.pdf" }
   ]
 }
 ```
@@ -503,6 +521,117 @@ The raw RAG retriever (`POST /query`, admin/debug only) has a different,
 retrieve-only contract: it takes `{query, owner?, topic?, filter?,
 numberOfResults?}` and returns `{chunks: [{text, score, uri, ...}]}` with no
 `answer`.
+
+---
+
+## Live home tools (MCP, return of control)
+
+familIA can answer from **live household data** and act on it (device health,
+allowlisted lights and plugs, Plex, photos, calendar, tasks and contacts)
+without exposing any home service to AWS or the internet.
+
+- A dedicated **MCP Pi** runs [home-mcp](https://github.com/mahdsip/home-mcp)
+  (`familia-mcp`), an MCP server (official SDK, `mcp==2.3.0`) that talks to the
+  home services over the LAN (outbound only). Its tools, safety model and
+  installer are documented in that repository.
+- The **OVOS Pi** proxy is the MCP client. It reaches `familia-mcp` over
+  **SSH stdio**: the proxy runs `ssh familia-mcp@mcpserver.local`, and the MCP Pi's
+  `authorized_keys` forces the server command for that key (`restrict`: no
+  shell, no port forwarding). No new port is opened on either Pi.
+- The **orchestrator** runs the Bedrock Converse tool loop but never executes
+  tools itself. It returns the model's tool request to the Pi
+  (*return of control*), the Pi runs it over MCP, and sends the result back.
+
+```
+Pi  -> /ask {question, client_time, tools}                     -> Lambda (classify: live)
+Pi  <- {mode: "tool_use", tool_calls, messages}                <- Lambda (Converse)
+Pi  -> MCP tools/call over SSH -> familia-mcp -> Prometheus
+Pi  -> /ask {question, client_time, tools, messages, tool_results} -> Lambda (Converse)
+Pi  <- {mode: "live", answer}                                  <- Lambda
+```
+
+Design notes:
+
+- **Backward compatible.** Without `tools`, `/ask` behaves exactly as before.
+  If the MCP Pi is down, the proxy declares no tools and familIA keeps
+  answering from documents and general knowledge.
+- **Stateless Lambda.** The Converse transcript (`messages`) travels with the
+  Pi between rounds; the Lambda validates its shape and size, accepts results
+  only for the pending `toolUseId`s, and stops after
+  `orchestrator_max_tool_rounds` (default 3).
+- **Defense in depth.** The proxy only runs tools the MCP server listed. The
+  model never writes PromQL: queries come from fixed templates, and device
+  names are matched against the live target list and escaped.
+- **Timezone from the device.** The proxy sends its local time with its UTC
+  offset (`client_time`), so "hoy"/"ayer" resolve in the household's timezone
+  without hard-coding one.
+
+### Tools available today
+
+The proxy declares whatever tools home-mcp lists, so new modules need no change
+here. Details, examples and limits:
+[home-mcp README](https://github.com/mahdsip/home-mcp#readme).
+
+| Module | Example questions |
+|---|---|
+| Prometheus | "¿Cómo están mis dispositivos?", "¿cuánto se calentó el pimonitor hoy?" |
+| Home Assistant | "Apaga las luces del salón", "enciende el ventilador de los niños" |
+| Plex | "¿Tenemos Toy Story?", "¿por dónde van los niños en la serie?" |
+| Photos | "¿Cuándo fuimos a Asturias?", "¿qué hicimos un día como hoy?" |
+| Nextcloud | "¿Qué tengo mañana?", "añade comprar leche", "apúntame dentista el jueves a las cinco" |
+
+**Spoken confirmation.** Some actions (plugs marked `confirm: true`,
+appointments, new contacts) are only *parked* by home-mcp, and the model asks a
+yes/no question. The proxy keeps the confirmation token on the OVOS Pi, so it
+never reaches AWS, and never declares the confirming tools to the model. On
+"sí" the proxy confirms locally; "no" cancels; anything else drops the parked
+action. The yes/no words and the spoken replies are Spanish by default and can
+be overridden with `CONFIRM_*` env vars in `proxy.env`.
+
+### Setup: MCP Pi
+
+Follow [home-mcp: Install / upgrade](https://github.com/mahdsip/home-mcp#install--upgrade-raspberry-pi-os-python-311).
+It creates the `familia-mcp` service user, the venv in `/opt/familia-mcp` and
+`/etc/familia/mcp.env`, which the SSH forced command below relies on.
+
+### Setup: OVOS Pi (SSH key + proxy)
+
+```bash
+# On the OVOS Pi: a dedicated key for the proxy user (no passphrase: unattended)
+sudo ssh-keygen -t ed25519 -N "" -C familia-proxy -f /etc/familia/mcp_ed25519
+sudo chown ovos:ovos /etc/familia/mcp_ed25519 && sudo chmod 600 /etc/familia/mcp_ed25519
+# Pin the MCP Pi host key (verify the fingerprint against the MCP Pi itself)
+ssh-keyscan -t ed25519 mcpserver.local | sudo tee /etc/familia/mcp_known_hosts
+cat /etc/familia/mcp_ed25519.pub            # copy for the next step
+
+# On the MCP Pi: authorize ONLY the server command for that key
+sudo install -d -o familia-mcp -g familia-mcp -m 700 /var/lib/familia-mcp/.ssh
+echo 'restrict,command="/opt/familia-mcp/venv/bin/familia-mcp" ssh-ed25519 AAAA...pub-key... familia-proxy' \
+  | sudo tee /var/lib/familia-mcp/.ssh/authorized_keys
+sudo chown familia-mcp:familia-mcp /var/lib/familia-mcp/.ssh/authorized_keys
+sudo chmod 600 /var/lib/familia-mcp/.ssh/authorized_keys
+```
+
+Then on the OVOS Pi install the proxy in a venv (see the comments in
+`scripts/familia-ovos-proxy.service.example`), and add to `/etc/familia/proxy.env`:
+
+```bash
+MCP_SERVER_COMMAND=ssh -F none -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/familia/mcp_known_hosts -o ServerAliveInterval=30 -i /etc/familia/mcp_ed25519 familia-mcp@mcpserver.local
+```
+
+On restart the proxy logs `live tools: N available`. Ask "¿cómo están mis
+dispositivos?" to test. Set `LOG_LEVEL=DEBUG` to see tool rounds and how many
+messages OVOS sends per request.
+
+### Tests
+
+```bash
+# Needs home-mcp checked out next to this repo (../home-mcp): its env has mcp/httpx
+# and provides the real familia-mcp server the bridge tests start over stdio.
+# Orchestrator contract + proxy loop + bridge against a real stdio familia-mcp
+uv run --project ../home-mcp --group dev \
+  --with boto3==1.43.123 --with requests==2.34.2 pytest --rootdir tests tests
+```
 
 ---
 
@@ -535,20 +664,6 @@ Before committing, run the check in [Validate](#validate).
 
 ---
 
-## Retiring the old PoC
-
-The original proof-of-concept was built by hand (no IaC). Once this stack is
-deployed and verified, remove the old resources:
-
-```bash
-AWS_PROFILE=<profile> ./scripts/destroy_poc.sh              # keeps the old docs bucket
-AWS_PROFILE=<profile> ./scripts/destroy_poc.sh --with-bucket # also deletes it (your files!)
-```
-
-The script lists everything and requires typing `DELETE` to proceed.
-
----
-
 ## Validate
 
 ```bash
@@ -564,10 +679,11 @@ git grep -nEi "AKIA[0-9A-Z]{16}|-----BEGIN|password|secret_key" -- . ':!*.exampl
 
 ## Extending to a Bedrock Agent
 
-The current design uses a single Lambda calling `RetrieveAndGenerate` (simplest,
-cheapest). If you later need multi-step reasoning or tool/actions, you can add a
-Bedrock Agent that references the same Knowledge Base without changing the
-storage or ingestion layers.
+The current design keeps retrieval (`Retrieve` in the retriever Lambda) and
+generation (Converse in the orchestrator, including the live-tools loop)
+separate, which is the simplest and cheapest option. If you later need longer
+multi-step plans, you can add a Bedrock Agent that references the same
+Knowledge Base without changing the storage or ingestion layers.
 
 ---
 
