@@ -1,8 +1,10 @@
 """Shared helpers for the orchestrator and proxy tests.
 
-Run from the repo root (uses the familia-mcp env, which already has mcp/httpx):
+Run from the repo root with home-mcp checked out next to it
+(https://github.com/mahdsip/home-mcp). Its env already has mcp/httpx and
+provides the real familia-mcp server the bridge tests start over stdio:
 
-    uv run --project mcp_server --group dev \
+    uv run --project ../home-mcp --group dev \
         --with boto3==1.43.123 --with requests==2.34.2 pytest tests
 """
 

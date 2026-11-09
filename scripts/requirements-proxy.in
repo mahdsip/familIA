@@ -1,0 +1,9 @@
+# Direct dependencies of the OVOS proxy (openvoice Pi). Compile the hashed
+# lock with:
+#   uv pip compile --universal --generate-hashes -p 3.11 \
+#       scripts/requirements-proxy.in -o scripts/requirements-proxy.txt
+botocore==1.43.123
+requests==2.34.2
+# Live home tools (MCP client). Must match the server's mcp version
+# (pyproject.toml in https://github.com/mahdsip/home-mcp).
+mcp==2.3.0

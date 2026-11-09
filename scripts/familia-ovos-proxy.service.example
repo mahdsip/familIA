@@ -1,7 +1,11 @@
-# systemd unit for the familIA OpenAI-compatible proxy on the Raspberry Pi.
+# systemd unit for the familIA OpenAI-compatible proxy on the OVOS Pi.
 #
 # Install (on the Pi):
-#   1. Copy scripts/ovos_openai_proxy.py to /opt/familia/ovos_openai_proxy.py
+#   1. Copy scripts/ovos_openai_proxy.py and scripts/familia_mcp_bridge.py to
+#      /opt/familia/, and create the venv:
+#        sudo python3 -m venv /opt/familia/venv
+#        sudo /opt/familia/venv/bin/pip install --require-hashes \
+#             -r requirements-proxy.txt
 #   2. Create /etc/familia/proxy.env from the block below (fill real values).
 #      chmod 600 it — it references AWS creds.
 #   3. sudo cp this file to /etc/systemd/system/familia-ovos-proxy.service
@@ -17,6 +21,9 @@
 #   # AWS creds for the familia-pi-client user (from create_pi_credentials.sh):
 #   AWS_ACCESS_KEY_ID=AKIA...
 #   AWS_SECRET_ACCESS_KEY=...
+#   # Optional: live home tools over SSH (stdio MCP, no open ports). Omit to
+#   # disable. Key and known_hosts must be readable by the service user.
+#   MCP_SERVER_COMMAND=ssh -F none -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/familia/mcp_known_hosts -o ServerAliveInterval=30 -i /etc/familia/mcp_ed25519 familia-mcp@mcpserver.local
 
 [Unit]
 Description=familIA OpenAI-compatible proxy (OVOS -> API Gateway /ask, SigV4)
@@ -28,7 +35,7 @@ Type=simple
 # Adjust User/paths to your Pi. Run as a non-root, unprivileged user.
 User=ovos
 EnvironmentFile=/etc/familia/proxy.env
-ExecStart=/usr/bin/python3 /opt/familia/ovos_openai_proxy.py
+ExecStart=/opt/familia/venv/bin/python /opt/familia/ovos_openai_proxy.py
 Restart=on-failure
 RestartSec=3
 # Hardening: loopback-only service, no privilege, no new privileges.
