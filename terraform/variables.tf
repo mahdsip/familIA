@@ -181,10 +181,9 @@ variable "inference_profile_region_prefix" {
 
 variable "generation_model_id" {
   description = <<-EOT
-    Bedrock model id used to generate answers from retrieved chunks. Query-time
-    cost is tiny for a home workload, so this favours quality but stays cheap.
-    Configurable so you can swap models without touching architecture (e.g.
-    amazon.nova-lite-v1:0 for an even cheaper option).
+    Legacy: the retriever no longer generates answers (Retrieve only; the
+    orchestrator uses orchestrator_model_id), so nothing uses this model now.
+    Kept so existing terraform.tfvars files that set it stay valid.
   EOT
   type        = string
   default     = "anthropic.claude-haiku-4-5-20251001-v1:0"

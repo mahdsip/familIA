@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Query Lambda: answers questions via Bedrock RetrieveAndGenerate
+# Query Lambda (retriever): Bedrock Retrieve only, returns chunks, no generation
 # ---------------------------------------------------------------------------
 data "archive_file" "query" {
   type        = "zip"
@@ -36,30 +36,14 @@ resource "aws_iam_role_policy" "query_lambda" {
         Resource = "${aws_cloudwatch_log_group.query.arn}:*"
       },
       {
-        Sid    = "RetrieveAndGenerate"
+        # Retrieve-only: no generation happens here (the orchestrator answers),
+        # so neither RetrieveAndGenerate nor InvokeModel is granted.
+        Sid    = "Retrieve"
         Effect = "Allow"
-        Action = [
-          "bedrock:RetrieveAndGenerate",
-          "bedrock:Retrieve"
-        ]
+        Action = ["bedrock:Retrieve"]
         # Scope to this account's knowledge bases. The specific KB may not exist
         # yet in phase 1 (enable_knowledge_base=false), so we scope by account.
         Resource = "arn:${local.partition}:bedrock:${var.aws_region}:${local.account_id}:knowledge-base/*"
-      },
-      {
-        # RetrieveAndGenerate invokes the generation model under the hood. With
-        # inference profiles, grant both the profile ARN and the underlying
-        # cross-region foundation model it routes to.
-        Sid    = "InvokeGenerationModel"
-        Effect = "Allow"
-        Action = [
-          "bedrock:InvokeModel",
-          "bedrock:GetInferenceProfile"
-        ]
-        Resource = distinct(concat(
-          [local.generation_model_arn],
-          var.use_inference_profiles ? [local.generation_fm_wildcard_arn] : [],
-        ))
       }
     ]
   })
@@ -85,9 +69,8 @@ resource "aws_lambda_function" "query" {
     variables = {
       # Empty in phase 1 (KB not created yet); set in phase 2. The Lambda only
       # answers usefully once the KB exists.
-      KNOWLEDGE_BASE_ID    = var.enable_knowledge_base ? aws_bedrockagent_knowledge_base.main[0].id : ""
-      GENERATION_MODEL_ARN = local.generation_model_arn
-      LOG_LEVEL            = "INFO"
+      KNOWLEDGE_BASE_ID = var.enable_knowledge_base ? aws_bedrockagent_knowledge_base.main[0].id : ""
+      LOG_LEVEL         = "INFO"
     }
   }
 
