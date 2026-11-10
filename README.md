@@ -41,17 +41,20 @@ flowchart TD
 
     subgraph AWS["AWS — eu-central-1"]
       API[API Gateway HTTP API<br/>IAM auth] --> ORCH[Orchestrator Lambda]
-      ORCH -->|intent + answer: Haiku| BR
+      ORCH -->|intent + answer + live tools<br/>Converse| GEN[(Claude Haiku 4.5<br/>generation)]
       ORCH -->|personal? RAG first<br/>lambda:InvokeFunction| QL[Retriever Lambda]
       QL -->|Retrieve chunks only| KB[Bedrock Knowledge Base]
-      KB -->|embeddings: Titan v2| BR[(Bedrock models)]
-      KB -->|vectors| V[(S3 Vectors)]
+      KB -->|embed chunks + questions| EMB[(Titan Text v2<br/>embeddings)]
+      KB -->|parse tables, layout,<br/>scanned PDFs| PARSE[(Claude Haiku 4.5<br/>FM parsing)]
+      KB -->|write / search vectors| V[(S3 Vectors)]
       KB -->|reads docs| S3[(S3 documents<br/>KMS-encrypted)]
+      KB -->|extracted images<br/>multimodal| SUP[(S3 supplemental)]
       S3 -->|ObjectCreated/Removed| AS[Auto-sync Lambda]
       SCH[EventBridge weekly] --> AS
       AS -->|StartIngestionJob| KB
       KMS[(KMS CMK)] -. encrypts .- S3
       KMS -. encrypts .- V
+      KMS -. encrypts .- SUP
     end
 ```
 
